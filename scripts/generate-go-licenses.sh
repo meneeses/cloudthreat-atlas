@@ -30,7 +30,7 @@ trap 'rm -f "$temporary"' EXIT
     printf '%s %s\n' "$module" "$version"
     printf 'Source: https://%s\n' "$module"
     printf '================================================================================\n\n'
-    sed -n '1,$p' "$license_file"
+    sed -e 's/\r$//' "$license_file"
   done < <(
     cd "$repo_root"
     for target_os in linux darwin windows; do
