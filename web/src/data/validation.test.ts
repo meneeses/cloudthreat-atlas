@@ -14,6 +14,55 @@ describe('snapshot runtime validation', () => {
     expect(snapshot.attackPaths).toHaveLength(3)
   })
 
+  it('preserves evidence provenance and bounded-analysis metadata', () => {
+    const payload = fixtureClone() as Record<string, unknown>
+    const relationships = payload.relationships as Array<Record<string, unknown>>
+    const findings = payload.findings as Array<Record<string, unknown>>
+    relationships[0]!.origin = 'observed'
+    relationships[0]!.confidence = 'high'
+    relationships[0]!.evidence = [{
+      source: 'Azure Resource Graph',
+      resourceId: '/subscriptions/demo/resourceGroups/atlas',
+      field: 'properties.publicNetworkAccess',
+      value: 'Enabled',
+    }]
+    findings[0]!.evidenceDetails = [{
+      source: 'normalized relationship',
+      field: 'exploitable',
+      value: 'true',
+    }]
+    payload.analysis = {
+      pathSearch: {
+        maxDepth: 8,
+        maxPaths: 1000,
+        maxPathsPerTarget: 30,
+        maxExpansions: 100000,
+        expansions: 418,
+        truncated: false,
+      },
+    }
+    payload.scope = {
+      subscriptionId: '11111111-2222-3333-4444-555555555555',
+      resourceGroup: 'clinical-prod',
+    }
+
+    const snapshot = parseSnapshot(payload)
+
+    expect(snapshot.relationships[0]).toMatchObject({
+      origin: 'observed',
+      confidence: 'high',
+      evidence: [expect.objectContaining({ field: 'properties.publicNetworkAccess' })],
+    })
+    expect(snapshot.findings[0]?.evidenceDetails).toEqual([
+      expect.objectContaining({ source: 'normalized relationship' }),
+    ])
+    expect(snapshot.analysis?.pathSearch).toMatchObject({ expansions: 418, truncated: false })
+    expect(snapshot.scope).toEqual({
+      subscriptionId: '11111111-2222-3333-4444-555555555555',
+      resourceGroup: 'clinical-prod',
+    })
+  })
+
   it('reports the exact nested path for an invalid enum', () => {
     const payload = fixtureClone() as typeof fixturePayload
     payload.findings[1]!.severity = 'urgent' as 'critical'

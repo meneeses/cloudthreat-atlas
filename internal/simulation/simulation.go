@@ -2,12 +2,19 @@ package simulation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
 
 	"github.com/meneeses/cloudthreat-atlas/internal/model"
 )
+
+// MaxChanges bounds the amount of mutation work accepted by one simulation.
+const MaxChanges = 100
+
+// ErrTooManyChanges indicates that a simulation request exceeded MaxChanges.
+var ErrTooManyChanges = errors.New("simulation change limit exceeded")
 
 // Analyzer is the subset of the analysis engine required by the simulator.
 type Analyzer interface {
@@ -16,15 +23,27 @@ type Analyzer interface {
 
 // Apply analyzes hypothetical changes on a clone and never mutates source.
 func Apply(ctx context.Context, analyzer Analyzer, source model.Snapshot, changes []model.SimulationChange) (model.SimulationResult, error) {
+	if len(changes) > MaxChanges {
+		return model.SimulationResult{}, fmt.Errorf("%w: got %d changes, maximum is %d", ErrTooManyChanges, len(changes), MaxChanges)
+	}
+	if err := ctx.Err(); err != nil {
+		return model.SimulationResult{}, err
+	}
 	before, err := analyzer.Analyze(ctx, source)
 	if err != nil {
 		return model.SimulationResult{}, fmt.Errorf("analyze original snapshot: %w", err)
 	}
 	changed := model.CloneSnapshot(source)
 	for _, change := range changes {
+		if err := ctx.Err(); err != nil {
+			return model.SimulationResult{}, err
+		}
 		if err := applyChange(&changed, change); err != nil {
 			return model.SimulationResult{}, err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return model.SimulationResult{}, err
 	}
 	after, err := analyzer.Analyze(ctx, changed)
 	if err != nil {

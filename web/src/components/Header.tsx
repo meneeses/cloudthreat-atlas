@@ -9,6 +9,7 @@ interface HeaderProps {
 
 function sourceLabel(source: DataSource): string {
   if (source === 'api') return 'LOCAL ENGINE'
+  if (source === 'import') return 'LOCAL IMPORT'
   if (source === 'fixture-fallback') return 'SAFE FALLBACK'
   return 'PUBLIC DEMO'
 }

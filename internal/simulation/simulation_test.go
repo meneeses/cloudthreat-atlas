@@ -3,6 +3,7 @@ package simulation_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"testing"
 
@@ -53,4 +54,47 @@ func TestRejectsUnknownTarget(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an unknown-target error")
 	}
+}
+
+func TestRejectsTooManyChangesBeforeAnalysis(t *testing.T) {
+	changes := make([]model.SimulationChange, simulation.MaxChanges+1)
+	analyzer := &recordingAnalyzer{}
+
+	_, err := simulation.Apply(context.Background(), analyzer, model.Snapshot{ID: "snapshot"}, changes)
+	if !errors.Is(err, simulation.ErrTooManyChanges) {
+		t.Fatalf("change limit error = %v", err)
+	}
+	if analyzer.calls != 0 {
+		t.Fatalf("analyzer calls = %d, want 0", analyzer.calls)
+	}
+}
+
+func TestChecksContextBeforeApplyingEachChange(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	analyzer := &recordingAnalyzer{cancel: cancel}
+	source := model.Snapshot{
+		ID:        "snapshot",
+		Resources: []model.ResourceNode{{ID: "resource"}},
+	}
+
+	_, err := simulation.Apply(ctx, analyzer, source, []model.SimulationChange{{Type: "disable-node", TargetID: "resource"}})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation error = %v", err)
+	}
+	if analyzer.calls != 1 {
+		t.Fatalf("analyzer calls = %d, want 1", analyzer.calls)
+	}
+}
+
+type recordingAnalyzer struct {
+	calls  int
+	cancel context.CancelFunc
+}
+
+func (a *recordingAnalyzer) Analyze(_ context.Context, input model.Snapshot) (model.Snapshot, error) {
+	a.calls++
+	if a.cancel != nil && a.calls == 1 {
+		a.cancel()
+	}
+	return input, nil
 }

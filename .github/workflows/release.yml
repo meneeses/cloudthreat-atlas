@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Install frontend dependencies
+        working-directory: web
+        run: npm ci
+      - name: Verify identity guards
+        run: |
+          ./scripts/check-forbidden-identity.sh --all
+          ./scripts/test-git-guards.sh
+      - name: Verify Go modules
+        run: go mod verify
+      - name: Test Go with race detector
+        run: go test -race . ./cmd/... ./internal/...
+      - name: Vet Go
+        run: go vet . ./cmd/... ./internal/...
+      - name: Scan Go dependencies and call paths
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 . ./cmd/... ./internal/...
+      - name: Lint and test frontend
+        run: |
+          npm --prefix web run lint
+          npm --prefix web test
+          npm --prefix web audit --audit-level=high
+      - name: Build and budget public dashboard
+        run: |
+          npm --prefix web run build
+          ./scripts/check-bundle-budgets.sh web/dist
+      - name: End-to-end test public dashboard
+        run: |
+          npm --prefix web exec -- playwright install --with-deps chromium
+          npm --prefix web run test:e2e
+      - name: Build embedded dashboard
+        working-directory: web
+        run: npm run build:embed
+      - name: Verify generated assets and notices
+        run: |
+          ./scripts/check-embedded-assets.sh
+          ./scripts/generate-go-licenses.sh
+          git diff --exit-code -- demo/GO_THIRD_PARTY_LICENSES.txt internal/server/webdist
+      - name: Smoke test standalone application
+        run: |
+          go build -trimpath -o "$RUNNER_TEMP/atlas" ./cmd/atlas
+          ./scripts/smoke-standalone.sh "$RUNNER_TEMP/atlas"
+      - name: Build portable archives
+        run: ./scripts/build-release.sh "$GITHUB_REF_NAME" "$RUNNER_TEMP/releases"
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP"/releases/* --generate-notes --verify-tag

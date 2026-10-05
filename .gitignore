@@ -12,8 +12,13 @@ web/coverage/
 /data/
 /reports/
 /scans/
+/.atlas/
 *.local.json
 *.scan.json
+*.atlas.db
+*.atlas.db-shm
+*.atlas.db-wal
+*.remediation.zip
 
 # Environment and credentials
 .env

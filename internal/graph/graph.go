@@ -34,10 +34,15 @@ func New(resources []model.ResourceNode, relationships []model.RelationshipEdge)
 		}
 		g.byID[resource.ID] = resource
 	}
+	relationshipIDs := make(map[string]struct{}, len(g.relationships))
 	for _, relationship := range g.relationships {
 		if relationship.ID == "" {
 			return nil, errors.New("relationship id must not be empty")
 		}
+		if _, exists := relationshipIDs[relationship.ID]; exists {
+			return nil, fmt.Errorf("duplicate relationship id %q", relationship.ID)
+		}
+		relationshipIDs[relationship.ID] = struct{}{}
 		if _, ok := g.byID[relationship.Source]; !ok {
 			return nil, fmt.Errorf("relationship %q has unknown source %q", relationship.ID, relationship.Source)
 		}

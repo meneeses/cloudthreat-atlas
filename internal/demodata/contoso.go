@@ -7,9 +7,9 @@ import (
 )
 
 const (
-	PathPublicApp = "path-internet-public-app-clinical-api-identity-clinical-api-vault-clinical-prod-database-clinical-prod"
-	PathPublicVM  = "path-internet-public-nsg-jumpbox-public-vm-ops-jumpbox-identity-ops-jumpbox-storage-patient-archive"
-	PathPipeline  = "path-pipeline-ci-security-sp-deploy-prod-rg-production-workspace-security-prod"
+	PathPublicApp = "path-internet-public-app-clinical-api-identity-clinical-api-vault-clinical-prod-database-clinical-prod-39e3349351c7"
+	PathPublicVM  = "path-internet-public-nsg-jumpbox-public-vm-ops-jumpbox-identity-ops-jumpbox-storage-patient-archive-9e23be8e7e47"
+	PathPipeline  = "path-pipeline-ci-security-sp-deploy-prod-rg-production-workspace-security-prod-a3922827901b"
 )
 
 // ContosoHealth returns a synthetic topology containing no real tenant identifiers or secrets.

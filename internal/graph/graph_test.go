@@ -22,6 +22,9 @@ func TestGraphSortsOutgoingAndRejectsBrokenTopology(t *testing.T) {
 	if _, err := graph.New(nodes, []model.RelationshipEdge{{ID: "broken", Source: "a", Target: "missing"}}); err == nil {
 		t.Fatal("graph accepted an edge with an unknown target")
 	}
+	if _, err := graph.New(nodes, []model.RelationshipEdge{{ID: "duplicate", Source: "a", Target: "b"}, {ID: "duplicate", Source: "b", Target: "c"}}); err == nil {
+		t.Fatal("graph accepted duplicate relationship identifiers")
+	}
 }
 
 func TestPathAnalyzerUsesCapabilityEdgesAndIgnoresContainment(t *testing.T) {

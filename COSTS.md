@@ -11,7 +11,7 @@ The public path uses [GitHub Pages for a public repository](https://docs.github.
 | Public demo | GitHub Pages from a public repository |
 | CI and Pages deployment | Standard Ubuntu GitHub-hosted runners |
 | Backend and API | Local Go process |
-| Persistence | Versioned JSON snapshots on the local machine |
+| Persistence | Local SQLite catalog plus compressed JSON snapshots |
 | Azure analysis | Read-only queries against an existing subscription |
 | Observability | Local structured logs and health endpoint |
 | Reports | Local JSON, HTML, Markdown, and SARIF files |
@@ -19,6 +19,7 @@ The public path uses [GitHub Pages for a public repository](https://docs.github.
 ## Guardrails
 
 - No managed database, custom domain, paid telemetry, commercial API, or continuously running backend is required.
+- The local catalog and snapshots remain on the user's machine; no sync service is required.
 - Workflows do not use larger runners and avoid retaining build artifacts or oversized caches.
 - The Azure collector must not contain provisioning or mutation operations.
 - Infrastructure-as-code that can create billable resources is outside the open-source core.

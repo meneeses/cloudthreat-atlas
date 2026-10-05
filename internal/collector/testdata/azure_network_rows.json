@@ -1,0 +1,61 @@
+[
+  {
+    "id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Network/virtualNetworks/core",
+    "name": "core",
+    "type": "microsoft.network/virtualnetworks",
+    "resourceGroup": "clinical-prod",
+    "subscriptionId": "11111111-2222-3333-4444-555555555555",
+    "subnets": [{
+      "id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Network/virtualNetworks/core/subnets/app",
+      "name": "app",
+      "properties": {"networkSecurityGroup": {"id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Network/networkSecurityGroups/app-nsg"}}
+    }]
+  },
+  {
+    "id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Network/networkSecurityGroups/app-nsg",
+    "name": "app-nsg",
+    "type": "microsoft.network/networksecuritygroups",
+    "resourceGroup": "clinical-prod",
+    "subscriptionId": "11111111-2222-3333-4444-555555555555",
+    "securityRules": [{"name": "allow-ssh", "properties": {"access": "Allow", "direction": "Inbound", "protocol": "Tcp", "priority": 100, "sourceAddressPrefix": "0.0.0.0/0", "destinationPortRange": "22"}}]
+  },
+  {
+    "id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Network/networkInterfaces/vm-nic",
+    "name": "vm-nic",
+    "type": "microsoft.network/networkinterfaces",
+    "resourceGroup": "clinical-prod",
+    "subscriptionId": "11111111-2222-3333-4444-555555555555",
+    "networkSecurityGroupId": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Network/networkSecurityGroups/app-nsg",
+    "ipConfigurations": [{"id": "ipconfig1", "properties": {"subnet": {"id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Network/virtualNetworks/core/subnets/app"}, "publicIPAddress": {"id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Network/publicIPAddresses/vm-pip"}}}]
+  },
+  {
+    "id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Compute/virtualMachines/vm",
+    "name": "vm",
+    "type": "microsoft.compute/virtualmachines",
+    "resourceGroup": "clinical-prod",
+    "subscriptionId": "11111111-2222-3333-4444-555555555555",
+    "networkProfile": {"networkInterfaces": [{"id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Network/networkInterfaces/vm-nic"}]}
+  },
+  {
+    "id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Network/publicIPAddresses/vm-pip",
+    "name": "vm-pip",
+    "type": "microsoft.network/publicipaddresses",
+    "resourceGroup": "clinical-prod",
+    "subscriptionId": "11111111-2222-3333-4444-555555555555",
+    "ipConfigurationId": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Network/networkInterfaces/vm-nic/ipConfigurations/ipconfig1"
+  },
+  {
+    "id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Network/privateEndpoints/storage-pe",
+    "name": "storage-pe",
+    "type": "microsoft.network/privateendpoints",
+    "resourceGroup": "clinical-prod",
+    "subscriptionId": "11111111-2222-3333-4444-555555555555",
+    "subnetId": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Network/virtualNetworks/core/subnets/app",
+    "privateLinkServiceConnections": [{"properties": {"privateLinkServiceId": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Storage/storageAccounts/archive", "groupIds": ["blob"]}}]
+  },
+  {"id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Storage/storageAccounts/archive", "name": "archive", "type": "microsoft.storage/storageaccounts", "resourceGroup": "clinical-prod", "subscriptionId": "11111111-2222-3333-4444-555555555555", "publicNetworkAccess": "Enabled", "networkDefaultAction": "Allow", "allowBlobPublicAccess": "false"},
+  {"id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.KeyVault/vaults/vault", "name": "vault", "type": "microsoft.keyvault/vaults", "resourceGroup": "clinical-prod", "subscriptionId": "11111111-2222-3333-4444-555555555555", "publicNetworkAccess": "Disabled", "networkDefaultAction": "Deny", "enableRbacAuthorization": "true"},
+  {"id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Sql/servers/sql", "name": "sql", "type": "microsoft.sql/servers", "resourceGroup": "clinical-prod", "subscriptionId": "11111111-2222-3333-4444-555555555555", "publicNetworkAccess": "Enabled"},
+  {"id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg", "name": "pg", "type": "microsoft.dbforpostgresql/flexibleservers", "resourceGroup": "clinical-prod", "subscriptionId": "11111111-2222-3333-4444-555555555555", "publicNetworkAccess": "Disabled", "delegatedSubnetResourceId": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Network/virtualNetworks/core/subnets/app"},
+  {"id": "/subscriptions/11111111-2222-3333-4444-555555555555/resourceGroups/clinical-prod/providers/Microsoft.Web/sites/api", "name": "api", "type": "microsoft.web/sites", "resourceGroup": "clinical-prod", "subscriptionId": "11111111-2222-3333-4444-555555555555", "publicNetworkAccess": "Enabled", "ipSecurityRestrictionCount": 1, "ipSecurityDefaultAction": "Deny"}
+]

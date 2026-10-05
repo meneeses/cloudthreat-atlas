@@ -5,7 +5,16 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 output="${1:-$repo_root/demo/GO_THIRD_PARTY_LICENSES.txt}"
 temporary="$(mktemp)"
-trap 'rm -f "$temporary"' EXIT
+module_list="$(mktemp)"
+trap 'rm -f "$temporary" "$module_list"' EXIT
+
+(
+  cd "$repo_root"
+  for target_os in linux darwin windows; do
+    GOOS="$target_os" GOARCH=amd64 CGO_ENABLED=0 \
+      go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}}|{{.Version}}|{{.Dir}}{{end}}{{end}}' ./cmd/atlas
+  done
+) | sort -u > "$module_list"
 
 {
   printf 'CloudThreat Atlas — Go third-party licenses\n'
@@ -31,15 +40,10 @@ trap 'rm -f "$temporary"' EXIT
     printf 'Source: https://%s\n' "$module"
     printf '================================================================================\n\n'
     sed -e 's/\r$//' "$license_file"
-  done < <(
-    cd "$repo_root"
-    for target_os in linux darwin windows; do
-      GOOS="$target_os" GOARCH=amd64 CGO_ENABLED=0 \
-        go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}}|{{.Version}}|{{.Dir}}{{end}}{{end}}' ./cmd/atlas
-    done | sort -u
-  )
+  done < "$module_list"
 } > "$temporary"
 
 mkdir -p "$(dirname "$output")"
 mv "$temporary" "$output"
+rm -f "$module_list"
 trap - EXIT

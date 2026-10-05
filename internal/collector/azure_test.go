@@ -2,11 +2,18 @@ package collector
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resourcegraph/armresourcegraph"
 	"github.com/meneeses/cloudthreat-atlas/internal/analysis"
 	"github.com/meneeses/cloudthreat-atlas/internal/model"
 )
@@ -29,32 +36,30 @@ func TestNormalizeThenAnalyzeProducesCapabilityPathAndFinding(t *testing.T) {
 	roles := []roleRow{{ID: "role-1", Scope: rgID, PrincipalID: testPrincipal, PrincipalType: "ServicePrincipal", RoleDefinitionID: storageDataRole}}
 	stamp := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 	snapshot := normalizeAzure(model.Scope{SubscriptionID: testSubscription}, rows, roles, stamp)
-	if len(snapshot.Resources) != 5 {
-		t.Fatalf("resources = %d, want 5", len(snapshot.Resources))
-	}
-	if len(snapshot.Relationships) != 5 {
-		t.Fatalf("relationships = %d, want 5", len(snapshot.Relationships))
-	}
 	if snapshot.GeneratedAt != stamp {
 		t.Fatalf("generatedAt = %v, want %v", snapshot.GeneratedAt, stamp)
 	}
+	if snapshot.Scope == nil || snapshot.Scope.SubscriptionID != testSubscription || snapshot.Scope.ResourceGroup != "" {
+		t.Fatalf("snapshot scope = %#v", snapshot.Scope)
+	}
 	assertEdge(t, snapshot, "contains", rgID, appID, false)
+	assertEdge(t, snapshot, "contains", "/subscriptions/"+testSubscription, rgID, false)
 	assertEdge(t, snapshot, "public_exposure", "internet-public", appID, true)
 	assertEdge(t, snapshot, "managed_identity", appID, "identity:"+testPrincipal, true)
-	assertEdge(t, snapshot, "data_access", "identity:"+testPrincipal, storageID, true)
+	assertEdge(t, snapshot, "data_access", "identity:"+testPrincipal, rgID, true)
 
 	analyzed, err := analysis.NewDefault().Analyze(context.Background(), snapshot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(analyzed.AttackPaths) != 1 {
-		t.Fatalf("attack paths = %d, want 1: %#v", len(analyzed.AttackPaths), analyzed.AttackPaths)
+	if len(analyzed.AttackPaths) != 0 {
+		t.Fatalf("scope-based RBAC should not create roles x resources path edges: %#v", analyzed.AttackPaths)
 	}
 	if len(analyzed.Findings) != 1 || analyzed.Findings[0].RuleID != "CTA-AZ-004" {
 		t.Fatalf("findings = %#v, want one CTA-AZ-004 finding", analyzed.Findings)
 	}
-	if len(analyzed.AttackPaths[0].FindingIDs) != 1 || analyzed.AttackPaths[0].FindingIDs[0] != analyzed.Findings[0].ID {
-		t.Fatalf("path finding links = %v", analyzed.AttackPaths[0].FindingIDs)
+	if len(analyzed.Findings[0].RelationshipIDs) != 4 {
+		t.Fatalf("finding should include exposure, identity, grant, and containment evidence: %v", analyzed.Findings[0].RelationshipIDs)
 	}
 }
 
@@ -100,6 +105,29 @@ func TestNormalizationIsIndependentOfRowOrder(t *testing.T) {
 	second := normalizeAzure(model.Scope{SubscriptionID: testSubscription}, reversedRows, reversedRoles, stamp)
 	if !reflect.DeepEqual(first, second) {
 		t.Fatalf("normalization depends on input order\nfirst=%#v\nsecond=%#v", first, second)
+	}
+}
+
+func TestDistinctRoleAssignmentsAtSameScopeArePreserved(t *testing.T) {
+	rgID := "/subscriptions/" + testSubscription + "/resourceGroups/clinical-prod"
+	rows := []resourceRow{{
+		ID: rgID + "/providers/Microsoft.Web/sites/api", Name: "api", Type: "microsoft.web/sites",
+		ResourceGroup: "clinical-prod", SubscriptionID: testSubscription, SystemPrincipalID: testPrincipal,
+	}}
+	contributorRole := "/providers/Microsoft.Authorization/roleDefinitions/b24988ac-6180-42a0-ab88-20f7382dd24c"
+	roles := []roleRow{
+		{ID: "assignment-owner", Scope: rgID, PrincipalID: testPrincipal, RoleDefinitionID: ownerRole},
+		{ID: "assignment-contributor", Scope: rgID, PrincipalID: testPrincipal, RoleDefinitionID: contributorRole},
+	}
+	snapshot := normalizeAzure(model.Scope{SubscriptionID: testSubscription}, rows, roles, time.Unix(0, 0))
+	assignments := make(map[string]bool)
+	for _, relationship := range snapshot.Relationships {
+		if relationship.Source == "identity:"+testPrincipal && relationship.Target == rgID && relationship.Type == "control_plane_access" {
+			assignments[relationship.Properties["roleAssignmentId"]] = true
+		}
+	}
+	if !assignments["assignment-owner"] || !assignments["assignment-contributor"] || len(assignments) != 2 {
+		t.Fatalf("control-plane assignments = %v, want both distinct grants", assignments)
 	}
 }
 
@@ -205,6 +233,342 @@ func TestKnownAndUnknownRoleCapabilities(t *testing.T) {
 	}
 }
 
+func TestNetworkAndServiceDefaultsNormalizeFromFixtureRows(t *testing.T) {
+	encoded, err := os.ReadFile("testdata/azure_network_rows.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []resourceRow
+	if err := json.Unmarshal(encoded, &rows); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := normalizeAzure(model.Scope{SubscriptionID: testSubscription}, rows, nil, time.Unix(0, 0))
+	base := "/subscriptions/" + testSubscription + "/resourceGroups/clinical-prod/providers/"
+	nsgID := base + "Microsoft.Network/networkSecurityGroups/app-nsg"
+	nicID := base + "Microsoft.Network/networkInterfaces/vm-nic"
+	vmID := base + "Microsoft.Compute/virtualMachines/vm"
+	pipID := base + "Microsoft.Network/publicIPAddresses/vm-pip"
+	subnetID := base + "Microsoft.Network/virtualNetworks/core/subnets/app"
+	peID := base + "Microsoft.Network/privateEndpoints/storage-pe"
+	storageID := base + "Microsoft.Storage/storageAccounts/archive"
+	assertEdge(t, snapshot, "public_ingress_candidate", "internet-public", nsgID, false)
+	assertEdge(t, snapshot, "network_filter", nsgID, nicID, false)
+	assertEdge(t, snapshot, "public_ip_association", pipID, nicID, false)
+	assertEdge(t, snapshot, "network_access", nicID, vmID, true)
+	assertEdge(t, snapshot, "network_segment", subnetID, peID, false)
+	assertEdge(t, snapshot, "private_endpoint", peID, storageID, false)
+	for _, id := range []string{storageID} {
+		assertEdge(t, snapshot, "public_exposure", "internet-public", id, true)
+	}
+	for _, id := range []string{pipID, base + "Microsoft.Sql/servers/sql", base + "Microsoft.Web/sites/api"} {
+		assertEdge(t, snapshot, "public_endpoint", "internet-public", id, false)
+	}
+	for _, id := range []string{base + "Microsoft.KeyVault/vaults/vault", base + "Microsoft.DBforPostgreSQL/flexibleServers/pg"} {
+		if hasEdge(snapshot, "public_exposure", "internet-public", id) {
+			t.Fatalf("disabled service %s was marked publicly exposed", id)
+		}
+	}
+	for _, edge := range snapshot.Relationships {
+		if edge.Origin == "" || edge.Confidence == "" {
+			t.Fatalf("relationship %s lacks provenance: %#v", edge.ID, edge)
+		}
+	}
+	analyzed, err := analysis.NewDefault().Analyze(context.Background(), snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range analyzed.AttackPaths {
+		if path.Target == vmID {
+			t.Fatalf("raw NSG allow/attachment facts created an effective VM path: %#v", path)
+		}
+	}
+}
+
+func TestPublicExposureRequiresInternetWideNetworkSettings(t *testing.T) {
+	tests := []struct {
+		name         string
+		row          resourceRow
+		resourceType string
+		edgeType     string
+		exploitable  bool
+	}{
+		{name: "storage allow", row: resourceRow{PublicNetworkAccess: "Enabled", NetworkDefaultAction: "Allow"}, resourceType: "Microsoft.Storage/storageAccounts", edgeType: "public_exposure", exploitable: true},
+		{name: "storage deny", row: resourceRow{PublicNetworkAccess: "Enabled", NetworkDefaultAction: "Deny"}, resourceType: "Microsoft.Storage/storageAccounts", edgeType: "public_endpoint"},
+		{name: "restricted app", row: resourceRow{PublicNetworkAccess: "Enabled", IPSecurityRestrictionCount: 1, IPSecurityDefaultAction: "Deny"}, resourceType: "Microsoft.Web/sites", edgeType: "public_endpoint"},
+		{name: "unrestricted app default", row: resourceRow{PublicNetworkAccess: "Enabled"}, resourceType: "Microsoft.Web/sites", edgeType: "public_exposure", exploitable: true},
+		{name: "SQL firewall unknown", row: resourceRow{PublicNetworkAccess: "Enabled"}, resourceType: "Microsoft.Sql/servers", edgeType: "public_endpoint"},
+		{name: "disabled", row: resourceRow{PublicNetworkAccess: "Disabled"}, resourceType: "Microsoft.KeyVault/vaults"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := classifyPublicExposure(test.row, test.resourceType)
+			if got.edgeType != test.edgeType || got.exploitable != test.exploitable {
+				t.Fatalf("classification = %+v", got)
+			}
+		})
+	}
+}
+
+func TestCustomRoleActionsAreConservativeAndHonorExclusions(t *testing.T) {
+	definitionID := "/subscriptions/" + testSubscription + "/providers/Microsoft.Authorization/roleDefinitions/custom-role"
+	definitions := indexRoleDefinitions([]roleDefinitionRow{{
+		ID: definitionID, RoleName: "Scoped data operator", RoleType: "CustomRole",
+		Permissions: []permissionRow{{
+			DataActions:    []string{"Microsoft.Storage/storageAccounts/blobServices/containers/blobs/*", "Microsoft.KeyVault/vaults/secrets/getSecret/action"},
+			NotDataActions: []string{"Microsoft.KeyVault/vaults/secrets/*"},
+		}},
+	}})
+	capabilities := roleCapabilities(definitionID, definitions)
+	if len(capabilities) != 1 || capabilities[0].EdgeType != "data_access" || capabilities[0].TargetType != "Microsoft.Storage/storageAccounts" || !capabilities[0].Custom {
+		t.Fatalf("custom role capabilities = %#v", capabilities)
+	}
+	if permissionAllows([]string{"*"}, []string{"Microsoft.Authorization/*/write"}, "Microsoft.Authorization/roleAssignments/write") {
+		t.Fatal("NotActions exclusion was ignored")
+	}
+}
+
+func TestCustomRoleRecognizesSecretValueActionButNotMetadataOnly(t *testing.T) {
+	secretID := "/subscriptions/" + testSubscription + "/providers/Microsoft.Authorization/roleDefinitions/secret-reader"
+	metadataID := "/subscriptions/" + testSubscription + "/providers/Microsoft.Authorization/roleDefinitions/metadata-reader"
+	definitions := indexRoleDefinitions([]roleDefinitionRow{
+		{ID: secretID, RoleName: "Secret value reader", RoleType: "CustomRole", Permissions: []permissionRow{{DataActions: []string{"Microsoft.KeyVault/vaults/secrets/getSecret/action"}}}},
+		{ID: metadataID, RoleName: "Secret metadata reader", RoleType: "CustomRole", Permissions: []permissionRow{{DataActions: []string{"Microsoft.KeyVault/vaults/secrets/readMetadata/action"}}}},
+	})
+	capabilities := roleCapabilities(secretID, definitions)
+	if len(capabilities) != 1 || capabilities[0].EdgeType != "secret_access" || capabilities[0].TargetType != "Microsoft.KeyVault/vaults" {
+		t.Fatalf("secret-value capabilities = %#v", capabilities)
+	}
+	if capabilities := roleCapabilities(metadataID, definitions); len(capabilities) != 0 {
+		t.Fatalf("metadata-only role was treated as secret value access: %#v", capabilities)
+	}
+}
+
+func TestCustomRolePreservesEachControlPlaneTarget(t *testing.T) {
+	rgID := "/subscriptions/" + testSubscription + "/resourceGroups/clinical-prod"
+	storageID := rgID + "/providers/Microsoft.Storage/storageAccounts/archive"
+	vaultID := rgID + "/providers/Microsoft.KeyVault/vaults/clinical"
+	definitionID := "/subscriptions/" + testSubscription + "/providers/Microsoft.Authorization/roleDefinitions/multi-service-operator"
+	rows := []resourceRow{
+		{ID: storageID, Name: "archive", Type: "Microsoft.Storage/storageAccounts", ResourceGroup: "clinical-prod", SubscriptionID: testSubscription},
+		{ID: vaultID, Name: "clinical", Type: "Microsoft.KeyVault/vaults", ResourceGroup: "clinical-prod", SubscriptionID: testSubscription},
+	}
+	roles := []roleRow{{ID: "assignment", Scope: rgID, PrincipalID: testPrincipal, PrincipalType: "ServicePrincipal", RoleDefinitionID: definitionID}}
+	definitions := []roleDefinitionRow{{
+		ID: definitionID, RoleName: "Multi-service operator", RoleType: "CustomRole",
+		Permissions: []permissionRow{{Actions: []string{"Microsoft.Storage/storageAccounts/write", "Microsoft.KeyVault/vaults/write"}}},
+	}}
+
+	snapshot := normalizeAzureWithDefinitions(model.Scope{SubscriptionID: testSubscription}, rows, roles, definitions, time.Unix(0, 0))
+	wantTargets := map[string]bool{
+		"Microsoft.Storage/storageAccounts": false,
+		"Microsoft.KeyVault/vaults":         false,
+	}
+	for _, edge := range snapshot.Relationships {
+		if edge.Type != "control_plane_access" || edge.Source != "principal:"+testPrincipal || edge.Target != rgID {
+			continue
+		}
+		targetType := edge.Properties["targetType"]
+		if _, wanted := wantTargets[targetType]; wanted {
+			wantTargets[targetType] = true
+		}
+	}
+	for targetType, found := range wantTargets {
+		if !found {
+			t.Fatalf("missing custom-role control-plane edge for %s; relationships = %#v", targetType, snapshot.Relationships)
+		}
+	}
+
+	capabilities := roleCapabilities(definitionID, indexRoleDefinitions(definitions))
+	for _, capability := range capabilities {
+		targets := capabilityTargets(rgID, capability, map[string]model.ResourceNode{
+			storageID: {ID: storageID, Type: "Microsoft.Storage/storageAccounts", Provider: "azure"},
+			vaultID:   {ID: vaultID, Type: "Microsoft.KeyVault/vaults", Provider: "azure"},
+		})
+		if len(targets) != 1 {
+			t.Fatalf("capability %q targets = %v, want exactly its resource type", capability.TargetType, targets)
+		}
+	}
+}
+
+func TestRBACNormalizationScalesWithAssignmentsNotDescendantResources(t *testing.T) {
+	rgID := "/subscriptions/" + testSubscription + "/resourceGroups/prod"
+	rows := make([]resourceRow, 250)
+	for index := range rows {
+		rows[index] = resourceRow{ID: fmt.Sprintf("%s/providers/Microsoft.Storage/storageAccounts/archive%d", rgID, index), Name: fmt.Sprintf("archive%d", index), Type: "microsoft.storage/storageaccounts", ResourceGroup: "prod", SubscriptionID: testSubscription}
+	}
+	roles := []roleRow{{ID: "assignment", Scope: rgID, PrincipalID: testPrincipal, RoleDefinitionID: ownerRole}}
+	snapshot := normalizeAzure(model.Scope{SubscriptionID: testSubscription}, rows, roles, time.Unix(0, 0))
+	grants := 0
+	for _, edge := range snapshot.Relationships {
+		if edge.Type == "control_plane_access" {
+			grants++
+			if edge.Target != rgID {
+				t.Fatalf("grant target = %s, want scope %s", edge.Target, rgID)
+			}
+		}
+	}
+	if grants != 1 {
+		t.Fatalf("control-plane grant edges = %d, want one", grants)
+	}
+}
+
+type resourceGraphFunc func(context.Context, armresourcegraph.QueryRequest, *armresourcegraph.ClientResourcesOptions) (armresourcegraph.ClientResourcesResponse, error)
+
+func (fn resourceGraphFunc) Resources(ctx context.Context, request armresourcegraph.QueryRequest, options *armresourcegraph.ClientResourcesOptions) (armresourcegraph.ClientResourcesResponse, error) {
+	return fn(ctx, request, options)
+}
+
+func TestQueryAllPaginatesAndRetriesCurrentPage(t *testing.T) {
+	var mutex sync.Mutex
+	calls := 0
+	client := resourceGraphFunc(func(_ context.Context, request armresourcegraph.QueryRequest, _ *armresourcegraph.ClientResourcesOptions) (armresourcegraph.ClientResourcesResponse, error) {
+		mutex.Lock()
+		defer mutex.Unlock()
+		calls++
+		if calls == 1 {
+			return armresourcegraph.ClientResourcesResponse{}, errors.New("transient")
+		}
+		if request.Options.SkipToken == nil {
+			return queryResponse([]any{"first"}, to.Ptr("next")), nil
+		}
+		return queryResponse([]any{"second"}, nil), nil
+	})
+	rows, err := queryAllWithRetry(context.Background(), client, testSubscription, "query", queryOptions{MaxAttempts: 2, Retryable: func(error) bool { return true }, RetryDelay: func(context.Context, int) error { return nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(rows, []any{"first", "second"}) || calls != 3 {
+		t.Fatalf("rows=%v calls=%d", rows, calls)
+	}
+}
+
+func TestQueryIndependentBoundsConcurrency(t *testing.T) {
+	started := make(chan struct{}, 3)
+	release := make(chan struct{})
+	client := resourceGraphFunc(func(ctx context.Context, _ armresourcegraph.QueryRequest, _ *armresourcegraph.ClientResourcesOptions) (armresourcegraph.ClientResourcesResponse, error) {
+		started <- struct{}{}
+		select {
+		case <-release:
+			return queryResponse([]any{}, nil), nil
+		case <-ctx.Done():
+			return armresourcegraph.ClientResourcesResponse{}, ctx.Err()
+		}
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, err := queryIndependent(context.Background(), client, testSubscription, []namedQuery{{name: "one"}, {name: "two"}, {name: "three"}}, queryOptions{MaxConcurrency: 2, MaxAttempts: 1})
+		done <- err
+	}()
+	<-started
+	<-started
+	select {
+	case <-started:
+		t.Fatal("third query started before a bounded worker was released")
+	default:
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestQueryAllHonorsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	client := resourceGraphFunc(func(callContext context.Context, _ armresourcegraph.QueryRequest, _ *armresourcegraph.ClientResourcesOptions) (armresourcegraph.ClientResourcesResponse, error) {
+		cancel()
+		<-callContext.Done()
+		return armresourcegraph.ClientResourcesResponse{}, callContext.Err()
+	})
+	_, err := queryAllWithRetry(ctx, client, testSubscription, "query", queryOptions{MaxAttempts: 3, Retryable: func(error) bool { return true }})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("query cancellation error = %v", err)
+	}
+}
+
+func TestQueryAllRejectsRowsBeyondPerQueryBudget(t *testing.T) {
+	calls := 0
+	client := resourceGraphFunc(func(_ context.Context, _ armresourcegraph.QueryRequest, _ *armresourcegraph.ClientResourcesOptions) (armresourcegraph.ClientResourcesResponse, error) {
+		calls++
+		return queryResponse([]any{"one", "two", "three"}, to.Ptr("more")), nil
+	})
+	_, err := queryAllWithRetry(context.Background(), client, testSubscription, "query", queryOptions{MaxAttempts: 1, MaxRowsPerQuery: 3, MaxPagesPerQuery: 10})
+	if !errors.Is(err, ErrCollectionBudgetExceeded) {
+		t.Fatalf("row budget error = %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("Resource Graph calls = %d, want one before refusing a partial result", calls)
+	}
+}
+
+func TestQueryAllRejectsUnboundedPagination(t *testing.T) {
+	calls := 0
+	client := resourceGraphFunc(func(_ context.Context, _ armresourcegraph.QueryRequest, _ *armresourcegraph.ClientResourcesOptions) (armresourcegraph.ClientResourcesResponse, error) {
+		calls++
+		return queryResponse([]any{}, to.Ptr(fmt.Sprintf("page-%d", calls))), nil
+	})
+	_, err := queryAllWithRetry(context.Background(), client, testSubscription, "query", queryOptions{MaxAttempts: 1, MaxRowsPerQuery: 10, MaxPagesPerQuery: 2})
+	if !errors.Is(err, ErrCollectionBudgetExceeded) {
+		t.Fatalf("page budget error = %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("Resource Graph calls = %d, want two", calls)
+	}
+}
+
+func TestQueryIndependentSharesRowBudgetAcrossConcurrentQueries(t *testing.T) {
+	client := resourceGraphFunc(func(_ context.Context, _ armresourcegraph.QueryRequest, _ *armresourcegraph.ClientResourcesOptions) (armresourcegraph.ClientResourcesResponse, error) {
+		return queryResponse([]any{"one", "two"}, nil), nil
+	})
+	_, err := queryIndependent(context.Background(), client, testSubscription, []namedQuery{{name: "one"}, {name: "two"}}, queryOptions{
+		MaxConcurrency: 2, MaxAttempts: 1, MaxRowsPerQuery: 10, MaxRowsAcrossQueries: 3, MaxPagesPerQuery: 1,
+	})
+	if !errors.Is(err, ErrCollectionBudgetExceeded) {
+		t.Fatalf("shared row budget error = %v", err)
+	}
+}
+
+func TestQueryAllRejectsBytesBeyondPerQueryBudget(t *testing.T) {
+	client := resourceGraphFunc(func(_ context.Context, _ armresourcegraph.QueryRequest, _ *armresourcegraph.ClientResourcesOptions) (armresourcegraph.ClientResourcesResponse, error) {
+		return queryResponse([]any{map[string]any{"nested": strings.Repeat("x", 128)}}, nil), nil
+	})
+	_, err := queryAllWithRetry(context.Background(), client, testSubscription, "query", queryOptions{
+		MaxAttempts: 1, MaxRowsPerQuery: 10, MaxBytesPerQuery: 64, MaxPagesPerQuery: 1,
+	})
+	if !errors.Is(err, ErrCollectionBudgetExceeded) {
+		t.Fatalf("byte budget error = %v", err)
+	}
+}
+
+func TestQueryIndependentSharesByteBudgetAcrossConcurrentQueries(t *testing.T) {
+	client := resourceGraphFunc(func(_ context.Context, _ armresourcegraph.QueryRequest, _ *armresourcegraph.ClientResourcesOptions) (armresourcegraph.ClientResourcesResponse, error) {
+		return queryResponse([]any{map[string]any{"nested": strings.Repeat("x", 48)}}, nil), nil
+	})
+	_, err := queryIndependent(context.Background(), client, testSubscription, []namedQuery{{name: "one"}, {name: "two"}}, queryOptions{
+		MaxConcurrency: 2, MaxAttempts: 1, MaxRowsPerQuery: 10, MaxRowsAcrossQueries: 10,
+		MaxBytesPerQuery: 256, MaxBytesAcrossQueries: 100, MaxPagesPerQuery: 1,
+	})
+	if !errors.Is(err, ErrCollectionBudgetExceeded) {
+		t.Fatalf("shared byte budget error = %v", err)
+	}
+}
+
+func queryResponse(data []any, skipToken *string) armresourcegraph.ClientResourcesResponse {
+	return armresourcegraph.ClientResourcesResponse{QueryResponse: armresourcegraph.QueryResponse{Data: data, SkipToken: skipToken}}
+}
+
+func BenchmarkNormalizeRBACScopeGrant(b *testing.B) {
+	rgID := "/subscriptions/" + testSubscription + "/resourceGroups/prod"
+	rows := make([]resourceRow, 1000)
+	for index := range rows {
+		rows[index] = resourceRow{ID: fmt.Sprintf("%s/providers/Microsoft.Storage/storageAccounts/archive%d", rgID, index), Type: "microsoft.storage/storageaccounts", ResourceGroup: "prod", SubscriptionID: testSubscription}
+	}
+	roles := []roleRow{{ID: "assignment", Scope: rgID, PrincipalID: testPrincipal, RoleDefinitionID: ownerRole}}
+	b.ResetTimer()
+	for range b.N {
+		normalizeAzure(model.Scope{SubscriptionID: testSubscription}, rows, roles, time.Unix(0, 0))
+	}
+}
+
 func assertEdge(t *testing.T, snapshot model.Snapshot, edgeType, source, target string, exploitable bool) {
 	t.Helper()
 	for _, edge := range snapshot.Relationships {
@@ -216,4 +580,13 @@ func assertEdge(t *testing.T, snapshot model.Snapshot, edgeType, source, target 
 		}
 	}
 	t.Fatalf("missing %s edge %s -> %s; got %#v", edgeType, source, target, snapshot.Relationships)
+}
+
+func hasEdge(snapshot model.Snapshot, edgeType, source, target string) bool {
+	for _, edge := range snapshot.Relationships {
+		if edge.Type == edgeType && edge.Source == source && edge.Target == target {
+			return true
+		}
+	}
+	return false
 }

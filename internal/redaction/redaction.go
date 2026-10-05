@@ -2,8 +2,10 @@
 package redaction
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -14,10 +16,30 @@ import (
 // deterministic aliases. The source snapshot is never mutated.
 func Redact(source model.Snapshot) model.Snapshot {
 	result := model.CloneSnapshot(source)
+	aliasKey := redactionAliasKey(source)
 	replacements := make(map[string]string)
+	var insensitiveReplacements []textReplacement
 	resourceIDs := make(map[string]string, len(result.Resources))
 	relationshipIDs := make(map[string]string, len(result.Relationships))
 	pathIDs := make(map[string]string, len(result.AttackPaths))
+	if result.Scope != nil {
+		redactedScope := model.Scope{}
+		if result.Scope.SubscriptionID != "" {
+			redactedScope.SubscriptionID = "subscription-" + digest(strings.ToLower(result.Scope.SubscriptionID))
+			replacements[result.Scope.SubscriptionID] = redactedScope.SubscriptionID
+			insensitiveReplacements = append(insensitiveReplacements, newTokenReplacement(result.Scope.SubscriptionID, redactedScope.SubscriptionID))
+		}
+		if result.Scope.ResourceGroup != "" {
+			// Resource-group names are frequently low entropy (for example,
+			// "prod" or "platform"). Key the deterministic alias with the
+			// subscription so a public export cannot be attacked with a generic
+			// offline dictionary of common names.
+			redactedScope.ResourceGroup = "resource-group-" + keyedDigest(aliasKey, strings.ToLower(result.Scope.ResourceGroup))
+			replacements[result.Scope.ResourceGroup] = redactedScope.ResourceGroup
+			insensitiveReplacements = append(insensitiveReplacements, newTokenReplacement(result.Scope.ResourceGroup, redactedScope.ResourceGroup))
+		}
+		result.Scope = &redactedScope
+	}
 
 	for i := range result.Resources {
 		resource := &result.Resources[i]
@@ -34,11 +56,15 @@ func Redact(source model.Snapshot) model.Snapshot {
 		if oldName != "" {
 			replacements[oldName] = resource.Name
 		}
-		resource.Properties = safeProperties(resource.Properties)
+		resource.Properties = safeProperties(resource.Properties, aliasKey)
 	}
 
 	for i := range result.Relationships {
 		relationship := &result.Relationships[i]
+		if strings.EqualFold(relationship.Properties["customRole"], "true") && relationship.Label != "" {
+			replacements[relationship.Label] = "Custom Azure role"
+			relationship.Label = "Custom Azure role"
+		}
 		for _, key := range []string{"roleAssignmentId", "roleDefinitionId"} {
 			if value := relationship.Properties[key]; value != "" {
 				replacements[value] = "redacted-" + strings.ToLower(key)
@@ -55,13 +81,18 @@ func Redact(source model.Snapshot) model.Snapshot {
 		relationship.ID = alias
 		relationship.Source = mapped(resourceIDs, relationship.Source)
 		relationship.Target = mapped(resourceIDs, relationship.Target)
-		relationship.Properties = safeProperties(relationship.Properties)
+		relationship.Properties = safeProperties(relationship.Properties, aliasKey)
+		// Structured collector evidence may contain tenant resource IDs, object
+		// IDs, role-assignment IDs, and organization-specific names. The redacted
+		// export intentionally omits it instead of risking a partial scrub.
+		relationship.Evidence = nil
 	}
 
 	for i := range result.Findings {
 		finding := &result.Findings[i]
 		finding.ResourceIDs = mapIDs(finding.ResourceIDs, resourceIDs)
 		finding.RelationshipIDs = mapIDs(finding.RelationshipIDs, relationshipIDs)
+		finding.EvidenceDetails = nil
 	}
 
 	for i := range result.AttackPaths {
@@ -92,58 +123,82 @@ func Redact(source model.Snapshot) model.Snapshot {
 		simulation.RemovedAttackPaths = mapIDs(simulation.RemovedAttackPaths, pathIDs)
 	}
 
-	replacer := newReplacer(replacements)
-	redactText(&result, replacer)
+	redactor := newTextRedactor(replacements, insensitiveReplacements)
+	redactText(&result, redactor)
 	result.ID = "redacted-" + digest(source.ID)
 	result.Name = "Redacted Azure environment"
 	result.Description = "Tenant-specific names and identifiers were deterministically redacted for sharing."
 	return result
 }
 
-func redactText(snapshot *model.Snapshot, replacer *strings.Replacer) {
+type textReplacement struct {
+	pattern     *regexp.Regexp
+	replacement string
+}
+
+func newTokenReplacement(value, alias string) textReplacement {
+	// Azure scope values may be repeated in text with different casing. Match
+	// only complete identifier tokens so a short resource-group name cannot
+	// rewrite characters inside unrelated words.
+	pattern := regexp.MustCompile(`(?i)(^|[^A-Za-z0-9_-])` + regexp.QuoteMeta(value) + `([^A-Za-z0-9_-]|$)`)
+	return textReplacement{pattern: pattern, replacement: "${1}" + alias + "${2}"}
+}
+
+func newTextRedactor(replacements map[string]string, insensitive []textReplacement) func(string) string {
+	replacer := newReplacer(replacements)
+	return func(value string) string {
+		value = replacer.Replace(value)
+		for _, replacement := range insensitive {
+			value = replacement.pattern.ReplaceAllString(value, replacement.replacement)
+		}
+		return value
+	}
+}
+
+func redactText(snapshot *model.Snapshot, redact func(string) string) {
 	for i := range snapshot.Relationships {
 		relationship := &snapshot.Relationships[i]
-		relationship.Label = replacer.Replace(relationship.Label)
-		relationship.Description = replacer.Replace(relationship.Description)
+		relationship.Label = redact(relationship.Label)
+		relationship.Description = redact(relationship.Description)
 	}
 	for i := range snapshot.Findings {
 		finding := &snapshot.Findings[i]
-		finding.Title = replacer.Replace(finding.Title)
-		finding.Description = replacer.Replace(finding.Description)
+		finding.Title = redact(finding.Title)
+		finding.Description = redact(finding.Description)
 		for evidenceIndex := range finding.Evidence {
-			finding.Evidence[evidenceIndex] = replacer.Replace(finding.Evidence[evidenceIndex])
+			finding.Evidence[evidenceIndex] = redact(finding.Evidence[evidenceIndex])
 		}
-		finding.Remediation.Summary = replacer.Replace(finding.Remediation.Summary)
+		finding.Remediation.Summary = redact(finding.Remediation.Summary)
 		for stepIndex := range finding.Remediation.Steps {
-			finding.Remediation.Steps[stepIndex] = replacer.Replace(finding.Remediation.Steps[stepIndex])
+			finding.Remediation.Steps[stepIndex] = redact(finding.Remediation.Steps[stepIndex])
 		}
 	}
 	for i := range snapshot.AttackPaths {
 		path := &snapshot.AttackPaths[i]
-		path.Title = replacer.Replace(path.Title)
-		path.Description = replacer.Replace(path.Description)
+		path.Title = redact(path.Title)
+		path.Description = redact(path.Description)
 		for stepIndex := range path.Steps {
-			path.Steps[stepIndex].Narrative = replacer.Replace(path.Steps[stepIndex].Narrative)
+			path.Steps[stepIndex].Narrative = redact(path.Steps[stepIndex].Narrative)
 		}
 	}
 	for i := range snapshot.Simulations {
 		simulation := &snapshot.Simulations[i]
-		simulation.Name = replacer.Replace(simulation.Name)
-		simulation.Description = replacer.Replace(simulation.Description)
+		simulation.Name = redact(simulation.Name)
+		simulation.Description = redact(simulation.Description)
 		for changeIndex := range simulation.Changes {
-			simulation.Changes[changeIndex].Description = replacer.Replace(simulation.Changes[changeIndex].Description)
+			simulation.Changes[changeIndex].Description = redact(simulation.Changes[changeIndex].Description)
 		}
 	}
 }
 
-func safeProperties(properties map[string]string) map[string]string {
+func safeProperties(properties map[string]string, aliasKey []byte) map[string]string {
 	if len(properties) == 0 {
 		return nil
 	}
 	allowed := map[string]bool{
-		"capability": true, "inferred": true, "kind": true,
-		"principalType": true, "publicNetworkAccess": true, "roleName": true,
-		"sku": true, "trust": true,
+		"capability": true, "customRole": true, "inferred": true, "kind": true,
+		"principalType": true, "publicNetworkAccess": true,
+		"sku": true, "targetType": true, "trust": true,
 	}
 	result := make(map[string]string)
 	for key, value := range properties {
@@ -152,7 +207,7 @@ func safeProperties(properties map[string]string) map[string]string {
 		}
 	}
 	if resourceGroup, ok := properties["resourceGroup"]; ok {
-		result["resourceGroup"] = "resource-group-" + digest(resourceGroup)
+		result["resourceGroup"] = "resource-group-" + keyedDigest(aliasKey, strings.ToLower(resourceGroup))
 	}
 	if len(result) == 0 {
 		return nil
@@ -209,4 +264,19 @@ func mapped(aliases map[string]string, value string) string {
 func digest(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:8])
+}
+
+func redactionAliasKey(source model.Snapshot) []byte {
+	seed := source.ID
+	if source.Scope != nil && strings.TrimSpace(source.Scope.SubscriptionID) != "" {
+		seed = strings.ToLower(strings.TrimSpace(source.Scope.SubscriptionID))
+	}
+	sum := sha256.Sum256([]byte("cloudthreat-atlas/redaction-alias/v1\x00" + seed))
+	return sum[:]
+}
+
+func keyedDigest(key []byte, value string) string {
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte(value))
+	return hex.EncodeToString(mac.Sum(nil)[:8])
 }

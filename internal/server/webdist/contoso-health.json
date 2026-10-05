@@ -373,7 +373,7 @@
   ],
   "attackPaths": [
     {
-      "id": "path-internet-public-app-clinical-api-identity-clinical-api-vault-clinical-prod-database-clinical-prod",
+      "id": "path-internet-public-app-clinical-api-identity-clinical-api-vault-clinical-prod-database-clinical-prod-39e3349351c7",
       "title": "Public application identity pivots into the clinical database",
       "description": "An internet-facing application can use its managed identity, read a database secret, and reach protected clinical data.",
       "severity": "critical",
@@ -428,7 +428,7 @@
       ]
     },
     {
-      "id": "path-internet-public-nsg-jumpbox-public-vm-ops-jumpbox-identity-ops-jumpbox-storage-patient-archive",
+      "id": "path-internet-public-nsg-jumpbox-public-vm-ops-jumpbox-identity-ops-jumpbox-storage-patient-archive-9e23be8e7e47",
       "title": "Exposed virtual machine reaches sensitive patient storage",
       "description": "Open network ingress and an over-privileged workload identity create a direct route to sensitive blobs.",
       "severity": "critical",
@@ -483,7 +483,7 @@
       ]
     },
     {
-      "id": "path-pipeline-ci-security-sp-deploy-prod-rg-production-workspace-security-prod",
+      "id": "path-pipeline-ci-security-sp-deploy-prod-rg-production-workspace-security-prod-a3922827901b",
       "title": "Compromised pipeline controls a production resource group",
       "description": "A leaked pipeline credential grants Owner-level control and reaches a critical security analytics resource.",
       "severity": "critical",
@@ -545,7 +545,7 @@
       ],
       "riskScoreAfter": 80,
       "removedAttackPaths": [
-        "path-internet-public-app-clinical-api-identity-clinical-api-vault-clinical-prod-database-clinical-prod"
+        "path-internet-public-app-clinical-api-identity-clinical-api-vault-clinical-prod-database-clinical-prod-39e3349351c7"
       ]
     },
     {
@@ -562,7 +562,7 @@
       ],
       "riskScoreAfter": 81,
       "removedAttackPaths": [
-        "path-internet-public-nsg-jumpbox-public-vm-ops-jumpbox-identity-ops-jumpbox-storage-patient-archive"
+        "path-internet-public-nsg-jumpbox-public-vm-ops-jumpbox-identity-ops-jumpbox-storage-patient-archive-9e23be8e7e47"
       ]
     },
     {
@@ -579,7 +579,7 @@
       ],
       "riskScoreAfter": 80,
       "removedAttackPaths": [
-        "path-pipeline-ci-security-sp-deploy-prod-rg-production-workspace-security-prod"
+        "path-pipeline-ci-security-sp-deploy-prod-rg-production-workspace-security-prod-a3922827901b"
       ]
     }
   ]

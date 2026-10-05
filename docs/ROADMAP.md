@@ -23,8 +23,20 @@
 ## Milestone 4 — Product hardening
 
 - Self-contained binary with the embedded web application
-- Snapshot comparison
-- Rule documentation and policy packs
+- Private SQLite workspace with immutable compressed snapshots
+- Snapshot history, comparison, and finding triage
+- Bounded graph slices and attack-path search
+- Cancelable scan jobs with phase events
+- Review-only remediation bundles
+- Cross-platform release archives and performance budgets
+
+## Milestone 5 — Azure depth and validation
+
+- Evidence and confidence on observed, derived, and heuristic relationships
+- Scope-aware RBAC and conservative custom-role analysis
+- Richer network topology and public-access settings
+- Authorized live-subscription validation without provisioning resources
+- Rule documentation and optional policy packs
 - Architecture walkthrough and demo video
 - Public launch material ([draft](launch-post.md))
 

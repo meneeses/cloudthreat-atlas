@@ -1,4 +1,4 @@
-import type { DataSource, SimulationPreset, SimulationResult, Snapshot } from '../types'
+import type { DataSource, SimulationImpact, SimulationPreset, Snapshot } from '../types'
 import { compareSimulation } from '../lib/atlas'
 
 interface SimulationPanelProps {
@@ -6,7 +6,7 @@ interface SimulationPanelProps {
   simulations: SimulationPreset[]
   selectedSimulationId: string | null
   onSelectSimulation: (simulationId: string | null) => void
-  result: SimulationResult | null
+  result: SimulationImpact | null
   loading: boolean
   error: string | null
   source: DataSource
@@ -30,7 +30,7 @@ export function SimulationPanel({
     ? {
         originalScore: result.riskScoreBefore,
         projectedScore: result.riskScoreAfter,
-        remainingPaths: result.remainingAttackPaths.length,
+        remainingPaths: result.remainingAttackPathCount,
       }
     : staticImpact
   const removedPathCount = result

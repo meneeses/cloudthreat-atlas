@@ -1,30 +1,33 @@
-import { memo, useCallback, useMemo, useState, type CSSProperties } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   Background,
   BackgroundVariant,
   Controls,
   Handle,
   MiniMap,
+  MarkerType,
   Position,
   ReactFlow,
   type Edge,
   type Node,
-  type NodeChange,
   type NodeProps,
+  type ReactFlowInstance,
   type XYPosition,
 } from '@xyflow/react'
-import type { AttackPath, Finding, RelationshipEdge, ResourceNode } from '../types'
-import { resourceSeverity, riskForResource } from '../lib/atlas'
+import type { AttackPath, RelationshipEdge, ResourceNode } from '../types'
+import { resourceSeverity } from '../lib/atlas'
 import { severityColor } from '../lib/severity'
+import type { AtlasViewModel } from '../lib/view-model'
 
 interface GraphViewProps {
   resources: ResourceNode[]
   relationships: RelationshipEdge[]
-  findings: Finding[]
+  model: AtlasViewModel
   visibleNodeIds: Set<string>
   selectedNodeId: string | null
   activePath: AttackPath | null
   storyStep: number
+  performanceMode: boolean
   onSelectNode: (nodeId: string | null) => void
 }
 
@@ -37,21 +40,6 @@ type ResourceNodeData = {
 } & Record<string, unknown>
 
 type ResourceFlowNode = Node<ResourceNodeData, 'resource'>
-
-const categoryColumns: Record<string, number> = {
-  external: 0,
-  entry_point: 0,
-  devops: 0,
-  network: 1,
-  compute: 2,
-  identity: 3,
-  security: 4,
-  secrets: 4,
-  scope: 4,
-  data: 5,
-  database: 5,
-  storage: 5,
-}
 
 const categoryGlyphs: Record<string, string> = {
   external: '◎',
@@ -99,21 +87,16 @@ const nodeTypes = { resource: MemoResourceCard }
 
 function layoutResources(
   resources: ResourceNode[],
-  findings: Finding[],
+  model: AtlasViewModel,
   selectedNodeId: string | null,
   activePath: AttackPath | null,
   storyStep: number,
 ): ResourceFlowNode[] {
-  const counts = new Map<number, number>()
   const activeIndex = new Map(
     activePath?.resourceIds.map((nodeId, index) => [nodeId, index] as const) ?? [],
   )
 
-  return resources.map((resource, fallbackIndex) => {
-    const normalizedCategory = resource.category.toLowerCase()
-    const column = categoryColumns[normalizedCategory] ?? (fallbackIndex % 5) + 1
-    const row = counts.get(column) ?? 0
-    counts.set(column, row + 1)
+  return resources.map((resource) => {
     const stepIndex = activeIndex.get(resource.id)
     let storyState: StoryState = activePath ? 'dimmed' : 'default'
 
@@ -127,9 +110,9 @@ function layoutResources(
     return {
       id: resource.id,
       type: 'resource',
-      position: { x: 70 + column * 260, y: 70 + row * 155 + (column % 2) * 34 },
+      position: model.positionByResourceId.get(resource.id) ?? { x: 0, y: 0 },
       selected: selectedNodeId === resource.id,
-      data: { resource, risk: riskForResource(resource, findings), storyState },
+      data: { resource, risk: model.riskByResourceId.get(resource.id) ?? 0, storyState },
       ariaLabel: `${resource.name}, ${resource.type}, ${resourceSeverity(resource)} criticality`,
     }
   })
@@ -140,6 +123,7 @@ function buildEdges(
   visibleNodeIds: Set<string>,
   activePath: AttackPath | null,
   storyStep: number,
+  performanceMode: boolean,
 ): Edge[] {
   const pathPairs = new Map<string, number>()
   if (activePath) {
@@ -157,21 +141,33 @@ function buildEdges(
       const pathIndex = pathPairs.get(`${relationship.source}::${relationship.target}`)
       const onPath = pathIndex !== undefined
       const visited = onPath && (storyStep < 0 || pathIndex < storyStep)
+      const normalizedType = relationship.type.toLowerCase()
+      const exposure = /exposure|public|internet|network/.test(normalizedType)
+      const permission = /role|permission|access|identity|authenticate|control/.test(normalizedType)
+      const semantic = exposure ? 'exposure' : permission ? 'permission' : 'dependency'
+      const semanticColor = exposure ? '#ff4d6d' : permission ? '#38bdf8' : '#526176'
       return {
         id: relationship.id,
         source: relationship.source,
         target: relationship.target,
-        label: relationship.label,
-        animated: visited,
-        className: onPath ? (visited ? 'edge-story-active' : 'edge-story-future') : '',
+        label: performanceMode && !onPath ? undefined : relationship.label,
+        animated: visited && !performanceMode,
+        className: `${onPath ? (visited ? 'edge-story-active' : 'edge-story-future') : ''} edge-${semantic}`,
         labelStyle: { fill: '#91a0b8', fontSize: 10, fontWeight: 600 },
         labelBgStyle: { fill: '#080d17', fillOpacity: 0.9 },
         labelBgPadding: [6, 4] as [number, number],
         style: {
-          stroke: onPath ? (visited ? '#29e8b2' : '#39465a') : '#283448',
+          stroke: onPath ? (visited ? '#29e8b2' : '#39465a') : semanticColor,
           strokeWidth: onPath ? 2.5 : 1.25,
           opacity: activePath && !onPath ? 0.18 : 0.85,
         },
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          color: onPath && visited ? '#29e8b2' : semanticColor,
+          width: 14,
+          height: 14,
+        },
+        ariaLabel: `${relationship.label}: ${relationship.source} to ${relationship.target}`,
       }
     })
 }
@@ -180,31 +176,38 @@ function GraphLegend() {
   return (
     <div className="graph-legend" aria-label="Graph legend">
       <span><i className="legend-line legend-exposure" /> Exposure</span>
-      <span><i className="legend-line legend-permission" /> Access</span>
+      <span><i className="legend-line legend-permission" /> Permission</span>
+      <span><i className="legend-line legend-dependency" /> Dependency</span>
       <span><i className="legend-line legend-path" /> Active path</span>
     </div>
   )
 }
 
-export default function GraphView({
+function GraphView({
   resources,
   relationships,
-  findings,
+  model,
   visibleNodeIds,
   selectedNodeId,
   activePath,
   storyStep,
+  performanceMode,
   onSelectNode,
 }: GraphViewProps) {
   const computedNodes = useMemo(
-    () => layoutResources(resources, findings, selectedNodeId, activePath, storyStep),
-    [activePath, findings, resources, selectedNodeId, storyStep],
+    () => layoutResources(resources, model, selectedNodeId, activePath, storyStep),
+    [activePath, model, resources, selectedNodeId, storyStep],
   )
   const computedEdges = useMemo(
-    () => buildEdges(relationships, visibleNodeIds, activePath, storyStep),
-    [activePath, relationships, storyStep, visibleNodeIds],
+    () => buildEdges(relationships, visibleNodeIds, activePath, storyStep, performanceMode),
+    [activePath, performanceMode, relationships, storyStep, visibleNodeIds],
   )
   const [positionOverrides, setPositionOverrides] = useState<Record<string, XYPosition>>({})
+  const flow = useRef<ReactFlowInstance<ResourceFlowNode, Edge> | null>(null)
+  const resourceSignature = useMemo(
+    () => resources.map((resource) => resource.id).join('\u0000'),
+    [resources],
+  )
   const nodes = useMemo(
     () =>
       computedNodes.map((node) => ({
@@ -213,22 +216,29 @@ export default function GraphView({
       })),
     [computedNodes, positionOverrides],
   )
-  const onNodesChange = useCallback((changes: NodeChange<ResourceFlowNode>[]) => {
-    const positionChanges = changes.filter(
-      (change) => change.type === 'position' && change.position,
-    )
-    if (positionChanges.length === 0) return
 
-    setPositionOverrides((current) => {
-      const next = { ...current }
-      for (const change of positionChanges) {
-        if (change.type === 'position' && change.position) {
-          next[change.id] = change.position
-        }
-      }
-      return next
+  useEffect(() => {
+    if (!activePath || !flow.current) return
+    const currentId = activePath.resourceIds[Math.max(0, storyStep)]
+    const currentNode = nodes.find((node) => node.id === currentId)
+    if (!currentNode) return
+    void flow.current.setCenter(currentNode.position.x + 111, currentNode.position.y + 36, {
+      zoom: performanceMode ? 0.9 : 1.05,
+      duration: performanceMode ? 0 : 420,
     })
-  }, [])
+  }, [activePath, nodes, performanceMode, storyStep])
+
+  useEffect(() => {
+    if (activePath || !flow.current || !resourceSignature) return undefined
+    const frame = window.requestAnimationFrame(() => {
+      void flow.current?.fitView({
+        padding: 0.2,
+        maxZoom: 1.05,
+        duration: performanceMode ? 0 : 240,
+      })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [activePath, performanceMode, resourceSignature])
 
   if (resources.length === 0) {
     return (
@@ -246,7 +256,10 @@ export default function GraphView({
         nodes={nodes}
         edges={computedEdges}
         nodeTypes={nodeTypes}
-        onNodesChange={onNodesChange}
+        onInit={(instance) => { flow.current = instance }}
+        onNodeDragStop={(_, node) => {
+          setPositionOverrides((current) => ({ ...current, [node.id]: node.position }))
+        }}
         onNodeClick={(_, node) => onSelectNode(node.id)}
         onPaneClick={() => onSelectNode(null)}
         fitView
@@ -254,12 +267,15 @@ export default function GraphView({
         minZoom={0.25}
         maxZoom={1.8}
         nodesConnectable={false}
+        nodesDraggable={!performanceMode}
+        onlyRenderVisibleElements
+        edgesFocusable={false}
         deleteKeyCode={null}
         colorMode="dark"
         proOptions={{ hideAttribution: true }}
       >
         <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#1b293c" />
-        <MiniMap
+        {!performanceMode ? <MiniMap
           pannable
           zoomable
           position="bottom-left"
@@ -269,10 +285,12 @@ export default function GraphView({
           }}
           nodeStrokeColor="#05080f"
           maskColor="rgba(3, 7, 13, 0.72)"
-        />
+        /> : null}
         <Controls position="bottom-left" showInteractive={false} />
       </ReactFlow>
       <GraphLegend />
     </div>
   )
 }
+
+export default memo(GraphView)

@@ -22,6 +22,8 @@ jobs:
         run: ./scripts/check-forbidden-identity.sh --all
       - name: Test identity guards
         run: ./scripts/test-git-guards.sh
+      - name: Validate release scripts
+        run: bash -n scripts/build-release.sh scripts/check-bundle-budgets.sh
 
   go:
     name: Go
@@ -80,6 +82,8 @@ jobs:
       - name: Build
         working-directory: web
         run: npm run build
+      - name: Enforce bundle budgets
+        run: ./scripts/check-bundle-budgets.sh web/dist
       - name: Install Playwright browser
         working-directory: web
         run: npx --no-install playwright install --with-deps chromium

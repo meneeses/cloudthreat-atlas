@@ -1,6 +1,10 @@
 import type {
+  AnalysisMetadata,
   AttackPath,
+  Confidence,
+  EvidenceRecord,
   Finding,
+  RelationshipOrigin,
   RelationshipEdge,
   ResourceNode,
   Severity,
@@ -11,6 +15,8 @@ import type {
 } from '../types'
 
 const severities = new Set<Severity>(['critical', 'high', 'medium', 'low', 'info'])
+const relationshipOrigins = new Set<RelationshipOrigin>(['observed', 'derived', 'heuristic'])
+const confidenceLevels = new Set<Confidence>(['high', 'medium', 'low'])
 const changeTypes = new Set<SimulationChange['type']>([
   'remove-edge',
   'disable-node',
@@ -69,6 +75,13 @@ function positiveIntegerAt(value: unknown, path: string): number {
   return value
 }
 
+function nonNegativeIntegerAt(value: unknown, path: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    return invalid(path, 'expected a non-negative integer')
+  }
+  return value
+}
+
 function severityAt(value: unknown, path: string): Severity {
   if (typeof value !== 'string' || !severities.has(value as Severity)) {
     return invalid(path, 'expected critical, high, medium, low, or info')
@@ -116,6 +129,69 @@ function propertiesAt(value: unknown, path: string): Record<string, string> | un
   return properties
 }
 
+function scopeAt(value: unknown, path: string): Snapshot['scope'] {
+  if (value === undefined) return undefined
+  const candidate = objectAt(value, path)
+  return {
+    subscriptionId: stringAt(candidate.subscriptionId, `${path}.subscriptionId`),
+    resourceGroup: optionalStringAt(candidate.resourceGroup, `${path}.resourceGroup`),
+  }
+}
+
+function evidenceRecordAt(value: unknown, path: string): EvidenceRecord {
+  const candidate = objectAt(value, path)
+  return {
+    source: optionalStringValueAt(candidate.source, `${path}.source`),
+    resourceId: optionalStringValueAt(candidate.resourceId, `${path}.resourceId`),
+    field: optionalStringValueAt(candidate.field, `${path}.field`),
+    value: optionalStringValueAt(candidate.value, `${path}.value`),
+  }
+}
+
+function evidenceRecordsAt(value: unknown, path: string): EvidenceRecord[] | undefined {
+  if (value === undefined) return undefined
+  return arrayAt(value, path).map((record, index) => evidenceRecordAt(record, `${path}[${index}]`))
+}
+
+function relationshipOriginAt(value: unknown, path: string): RelationshipOrigin | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !relationshipOrigins.has(value as RelationshipOrigin)) {
+    return invalid(path, 'expected observed, derived, or heuristic')
+  }
+  return value as RelationshipOrigin
+}
+
+function confidenceAt(value: unknown, path: string): Confidence | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !confidenceLevels.has(value as Confidence)) {
+    return invalid(path, 'expected high, medium, or low')
+  }
+  return value as Confidence
+}
+
+function analysisAt(value: unknown, path: string): AnalysisMetadata | undefined {
+  if (value === undefined) return undefined
+  const candidate = objectAt(value, path)
+  const pathSearch = objectAt(candidate.pathSearch, `${path}.pathSearch`)
+  return {
+    pathSearch: {
+      maxDepth: nonNegativeIntegerAt(pathSearch.maxDepth, `${path}.pathSearch.maxDepth`),
+      maxPaths: nonNegativeIntegerAt(pathSearch.maxPaths, `${path}.pathSearch.maxPaths`),
+      maxPathsPerTarget: nonNegativeIntegerAt(
+        pathSearch.maxPathsPerTarget,
+        `${path}.pathSearch.maxPathsPerTarget`,
+      ),
+      maxExpansions: nonNegativeIntegerAt(
+        pathSearch.maxExpansions,
+        `${path}.pathSearch.maxExpansions`,
+      ),
+      expansions: nonNegativeIntegerAt(pathSearch.expansions, `${path}.pathSearch.expansions`),
+      truncated: booleanAt(pathSearch.truncated, `${path}.pathSearch.truncated`),
+      reason: optionalStringValueAt(pathSearch.reason, `${path}.pathSearch.reason`),
+    },
+  }
+}
+
 function resourceAt(value: unknown, path: string): ResourceNode {
   const candidate = objectAt(value, path)
   return {
@@ -141,6 +217,9 @@ function relationshipAt(value: unknown, path: string): RelationshipEdge {
     description: optionalStringAt(candidate.description, `${path}.description`),
     exploitable: booleanAt(candidate.exploitable, `${path}.exploitable`),
     properties: propertiesAt(candidate.properties, `${path}.properties`),
+    origin: relationshipOriginAt(candidate.origin, `${path}.origin`),
+    confidence: confidenceAt(candidate.confidence, `${path}.confidence`),
+    evidence: evidenceRecordsAt(candidate.evidence, `${path}.evidence`),
   }
 }
 
@@ -160,6 +239,7 @@ function findingAt(value: unknown, path: string): Finding {
         ? undefined
         : stringArrayAt(candidate.relationshipIds, `${path}.relationshipIds`),
     evidence: stringArrayAt(candidate.evidence, `${path}.evidence`),
+    evidenceDetails: evidenceRecordsAt(candidate.evidenceDetails, `${path}.evidenceDetails`),
     remediation: {
       summary: stringAt(remediation.summary, `${path}.remediation.summary`),
       steps: stringArrayAt(remediation.steps, `${path}.remediation.steps`),
@@ -411,6 +491,7 @@ function parseSnapshotWithContext(
     id: stringAt(candidate.id, `${root}.id`),
     name: stringAt(candidate.name, `${root}.name`),
     provider: stringAt(candidate.provider, `${root}.provider`),
+    scope: scopeAt(candidate.scope, `${root}.scope`),
     generatedAt,
     description: optionalStringAt(candidate.description, `${root}.description`),
     resources,
@@ -419,6 +500,7 @@ function parseSnapshotWithContext(
     attackPaths,
     riskScore: boundedNumberAt(candidate.riskScore, `${root}.riskScore`),
     simulations,
+    analysis: analysisAt(candidate.analysis, `${root}.analysis`),
   }
 }
 

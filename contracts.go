@@ -15,18 +15,34 @@ const (
 	SeverityInfo     = model.SeverityInfo
 )
 
+const (
+	RelationshipObserved  = model.RelationshipObserved
+	RelationshipDerived   = model.RelationshipDerived
+	RelationshipHeuristic = model.RelationshipHeuristic
+
+	ConfidenceHigh   = model.ConfidenceHigh
+	ConfidenceMedium = model.ConfidenceMedium
+	ConfidenceLow    = model.ConfidenceLow
+)
+
 type (
-	ResourceNode     = model.ResourceNode
-	RelationshipEdge = model.RelationshipEdge
-	Remediation      = model.Remediation
-	Finding          = model.Finding
-	AttackStep       = model.AttackStep
-	AttackPath       = model.AttackPath
-	SimulationChange = model.SimulationChange
-	SimulationPreset = model.SimulationPreset
-	SimulationResult = model.SimulationResult
-	Snapshot         = model.Snapshot
-	Scope            = model.Scope
+	ResourceNode       = model.ResourceNode
+	EvidenceRecord     = model.EvidenceRecord
+	RelationshipOrigin = model.RelationshipOrigin
+	Confidence         = model.Confidence
+	RelationshipEdge   = model.RelationshipEdge
+	Remediation        = model.Remediation
+	Finding            = model.Finding
+	AttackStep         = model.AttackStep
+	AttackPath         = model.AttackPath
+	SimulationChange   = model.SimulationChange
+	SimulationPreset   = model.SimulationPreset
+	SimulationResult   = model.SimulationResult
+	SimulationDelta    = model.SimulationDelta
+	Snapshot           = model.Snapshot
+	AnalysisMetadata   = model.AnalysisMetadata
+	PathSearchMetadata = model.PathSearchMetadata
+	Scope              = model.Scope
 
 	Graph        = model.Graph
 	Collector    = model.Collector
