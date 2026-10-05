@@ -1,0 +1,30 @@
+# Go
+/atlas
+/bin/
+coverage.out
+
+# Frontend
+web/node_modules/
+web/dist/
+web/coverage/
+
+# Local scans and generated reports
+/data/
+/reports/
+/scans/
+*.local.json
+*.scan.json
+
+# Environment and credentials
+.env
+.env.*
+!.env.example
+.azure/
+
+# Tooling
+.DS_Store
+.idea/
+.vscode/
+output/playwright/*
+!output/playwright/.gitkeep
+/.playwright-cli/

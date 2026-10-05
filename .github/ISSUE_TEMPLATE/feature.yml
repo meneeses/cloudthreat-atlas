@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose a defensive, read-only improvement.
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What security analysis or explanation is currently difficult?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed outcome
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Project boundaries
+      options:
+        - label: The feature can remain read-only.
+          required: true
+        - label: The feature preserves a zero-cost local path.
+          required: true
+        - label: The feature does not require collecting secret values.
+          required: true

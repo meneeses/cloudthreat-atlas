@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  identity:
+    name: Identity safety
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reject accidental company attribution
+        run: ./scripts/check-forbidden-identity.sh --all
+      - name: Test identity guards
+        run: ./scripts/test-git-guards.sh
+
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Verify modules
+        run: go mod verify
+      - name: Test with race detector
+        run: go test -race . ./cmd/... ./internal/...
+      - name: Vet
+        run: go vet . ./cmd/... ./internal/...
+      - name: Build CLI
+        run: go build ./cmd/atlas
+      - name: Vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 . ./cmd/... ./internal/...
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: false
+      - name: Install
+        working-directory: web
+        run: npm ci
+      - name: Lint
+        working-directory: web
+        run: npm run lint
+      - name: Test
+        working-directory: web
+        run: npm test
+      - name: Audit dependencies
+        working-directory: web
+        run: npm audit --audit-level=high
+      - name: Build
+        working-directory: web
+        run: npm run build
+      - name: Install Playwright browser
+        working-directory: web
+        run: npx --no-install playwright install --with-deps chromium
+      - name: End-to-end test
+        working-directory: web
+        run: npm run test:e2e
+      - name: Build local API mode
+        working-directory: web
+        run: npm run build:api
