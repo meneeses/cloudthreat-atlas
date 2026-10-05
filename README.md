@@ -39,10 +39,15 @@ make demo
 
 Then open `http://localhost:8080`.
 
+The dashboard is embedded in the Go executable. After cloning once, an
+ordinary `go build -o atlas ./cmd/atlas` produces a self-contained binary that
+can run `atlas demo` from any directory; `--web-dir` remains available as a
+development override.
+
 ## Commands
 
 ```bash
-# Serve a previously built dashboard with the local API
+# Serve the embedded dashboard with the local API
 go run ./cmd/atlas demo
 
 # Analyze a local snapshot
@@ -128,3 +133,5 @@ The detailed roadmap lives in [docs/ROADMAP.md](docs/ROADMAP.md).
 ## License
 
 Copyright 2026 Joao Meneses. Licensed under the [Apache License 2.0](LICENSE).
+Dependency attributions are documented in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

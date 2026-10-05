@@ -22,9 +22,9 @@
 
 ## Milestone 4 — Product hardening
 
+- Self-contained binary with the embedded web application
 - Snapshot comparison
 - Rule documentation and policy packs
-- Release binaries with the embedded web application
 - Architecture walkthrough and demo video
 - Public launch material ([draft](launch-post.md))
 

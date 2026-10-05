@@ -19,6 +19,7 @@ web/coverage/
 .env
 .env.*
 !.env.example
+!web/.env.api
 .azure/
 
 # Tooling

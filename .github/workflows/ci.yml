@@ -41,7 +41,13 @@ jobs:
       - name: Vet
         run: go vet . ./cmd/... ./internal/...
       - name: Build CLI
-        run: go build ./cmd/atlas
+        run: go build -trimpath -o "$RUNNER_TEMP/atlas" ./cmd/atlas
+      - name: Smoke test standalone demo
+        run: ./scripts/smoke-standalone.sh "$RUNNER_TEMP/atlas"
+      - name: Verify Go dependency notices
+        run: |
+          ./scripts/generate-go-licenses.sh
+          git diff --exit-code -- demo/GO_THIRD_PARTY_LICENSES.txt
       - name: Vulnerability scan
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 . ./cmd/... ./internal/...
 
@@ -52,6 +58,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
@@ -79,3 +89,8 @@ jobs:
       - name: Build local API mode
         working-directory: web
         run: npm run build:api
+      - name: Rebuild embedded dashboard
+        working-directory: web
+        run: npm run build:embed
+      - name: Verify embedded dashboard is current
+        run: ./scripts/check-embedded-assets.sh

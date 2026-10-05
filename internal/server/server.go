@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -27,7 +29,7 @@ type Analyzer interface {
 type API struct {
 	snapshot model.Snapshot
 	analyzer Analyzer
-	webDir   string
+	staticFS fs.FS
 	static   http.Handler
 }
 
@@ -37,11 +39,23 @@ func New(ctx context.Context, source model.Snapshot, analyzer Analyzer, webDir s
 	if err != nil {
 		return nil, err
 	}
-	api := &API{snapshot: snapshot, analyzer: analyzer, webDir: webDir}
+	staticFS := embeddedWebFS()
 	if webDir != "" {
-		if info, statErr := os.Stat(filepath.Join(webDir, "index.html")); statErr == nil && !info.IsDir() {
-			api.static = http.FileServer(http.Dir(webDir))
+		index := filepath.Join(webDir, "index.html")
+		info, statErr := os.Stat(index)
+		if statErr != nil {
+			return nil, fmt.Errorf("open dashboard override %q: %w", webDir, statErr)
 		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("open dashboard override %q: index.html is not a regular file", webDir)
+		}
+		staticFS = os.DirFS(webDir)
+	}
+	api := &API{
+		snapshot: snapshot,
+		analyzer: analyzer,
+		staticFS: staticFS,
+		static:   http.FileServer(http.FS(staticFS)),
 	}
 	return api, nil
 }
@@ -152,36 +166,39 @@ func (a *API) serveSPA(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w, http.MethodGet, http.MethodHead)
 		return
 	}
-	if a.static == nil {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"name":       "CloudThreat Atlas",
-			"snapshotId": a.snapshot.ID,
-			"message":    "API is ready. Build web/ to serve the interactive dashboard.",
-		})
+	staticPath := normalizeStaticPath(r.URL.Path)
+	if strings.HasSuffix(strings.ToLower(staticPath), ".map") {
+		http.NotFound(w, r)
 		return
 	}
-	staticPath := normalizeStaticPath(r.URL.Path)
-	clean := filepath.Clean(strings.TrimPrefix(staticPath, "/"))
+	clean := path.Clean(strings.TrimPrefix(staticPath, "/"))
 	if clean == "." {
 		clean = "index.html"
 	}
-	requested := filepath.Join(a.webDir, clean)
-	if relative, err := filepath.Rel(a.webDir, requested); err != nil || strings.HasPrefix(relative, "..") {
+	if !fs.ValidPath(clean) {
 		writeError(w, http.StatusBadRequest, "invalid path")
 		return
 	}
-	if info, err := os.Stat(requested); err == nil && !info.IsDir() {
+	if info, err := fs.Stat(a.staticFS, clean); err == nil && !info.IsDir() {
 		staticRequest := r.Clone(r.Context())
-		staticRequest.URL.Path = staticPath
+		if clean == "index.html" {
+			staticRequest.URL.Path = "/"
+		} else {
+			staticRequest.URL.Path = "/" + clean
+		}
 		a.static.ServeHTTP(w, staticRequest)
 		return
 	}
-	index := filepath.Join(a.webDir, "index.html")
-	http.ServeFile(w, r, index)
+	// Missing files with an extension are assets, not client-side routes. A
+	// strict 404 keeps an accidentally generated source map from falling
+	// through to index.html and avoids serving HTML as JavaScript.
+	if path.Ext(clean) != "" {
+		http.NotFound(w, r)
+		return
+	}
+	indexRequest := r.Clone(r.Context())
+	indexRequest.URL.Path = "/"
+	a.static.ServeHTTP(w, indexRequest)
 }
 
 func normalizeStaticPath(path string) string {

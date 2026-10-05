@@ -1,12 +1,14 @@
 {
   "name": "cloudthreat-atlas-web",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "build:api": "tsc -b && VITE_DATA_SOURCE=api vite build",
+    "build:api": "tsc -b && vite build --mode api",
+    "prebuild:embed": "../scripts/generate-go-licenses.sh",
+    "build:embed": "tsc -b && vite build --mode api --outDir ../internal/server/webdist --emptyOutDir",
     "lint": "eslint . --max-warnings 0",
     "preview": "vite preview",
     "test": "vitest run",

@@ -27,3 +27,6 @@ CloudThreat Atlas separates collection, analysis, presentation, and reporting so
 - Rules are small Go units with stable identifiers and explicit evidence.
 - `atlas scan azure --redact` replaces tenant-specific names and identifiers while preserving graph references.
 - The frontend depends on a provider contract rather than a specific hosting model.
+- The API-mode production frontend is versioned and embedded with `go:embed`,
+  so `atlas demo` is a self-contained local application. A filesystem build
+  can be supplied explicitly with `--web-dir` during development.

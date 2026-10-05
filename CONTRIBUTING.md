@@ -10,6 +10,10 @@ Thank you for helping make cloud security easier to understand.
 4. Create a focused branch and add tests with the change.
 5. Run `make test` and `make verify` before opening a pull request.
 
+When frontend code changes, run `npm run build:embed` from `web/` and commit
+the refreshed `internal/server/webdist/` output. CI rebuilds it and rejects
+stale generated assets.
+
 Use Conventional Commit-style messages when practical, for example `feat(graph): add identity edge details`.
 
 ## Project boundaries

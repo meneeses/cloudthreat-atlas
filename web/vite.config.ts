@@ -8,7 +8,8 @@ export default defineConfig(({ command }) => ({
   plugins: [react()],
   build: {
     target: 'es2022',
-    sourcemap: true,
+    sourcemap: false,
+    license: { fileName: 'THIRD_PARTY_LICENSES.md' },
   },
   test: {
     environment: 'jsdom',

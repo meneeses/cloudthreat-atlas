@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -92,6 +93,55 @@ func TestSPAFallback(t *testing.T) {
 	api.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/cloudthreat-atlas/asset.js", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "atlas") {
 		t.Fatalf("Pages-prefixed asset = %d %q", response.Code, response.Body.String())
+	}
+}
+
+func TestEmbeddedDashboardFallback(t *testing.T) {
+	api, err := server.New(context.Background(), demodata.ContosoHealth(), analysis.NewDefault(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var index []byte
+	for _, requestPath := range []string{"/", "/cloudthreat-atlas/", "/attack-paths/demo"} {
+		response := httptest.NewRecorder()
+		api.ServeHTTP(response, httptest.NewRequest(http.MethodGet, requestPath, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("embedded SPA %s = %d: %s", requestPath, response.Code, response.Body.String())
+		}
+		if !strings.Contains(response.Body.String(), "CloudThreat Atlas") {
+			t.Fatalf("embedded SPA %s did not return the dashboard", requestPath)
+		}
+		if requestPath == "/" {
+			index = response.Body.Bytes()
+		}
+	}
+
+	assetPattern := regexp.MustCompile(`src="([^"]+/assets/[^"]+\.js)"`)
+	match := assetPattern.FindSubmatch(index)
+	if len(match) != 2 {
+		t.Fatalf("embedded index does not reference a JavaScript asset: %s", index)
+	}
+	response := httptest.NewRecorder()
+	api.ServeHTTP(response, httptest.NewRequest(http.MethodGet, string(match[1]), nil))
+	if response.Code != http.StatusOK || response.Body.Len() == 0 {
+		t.Fatalf("embedded asset %s = %d (%d bytes)", match[1], response.Code, response.Body.Len())
+	}
+
+	for _, requestPath := range []string{"/assets/missing.js", "/assets/index.js.map"} {
+		response = httptest.NewRecorder()
+		api.ServeHTTP(response, httptest.NewRequest(http.MethodGet, requestPath, nil))
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("embedded asset %s = %d, want 404", requestPath, response.Code)
+		}
+	}
+}
+
+func TestMissingDashboardOverrideIsRejected(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	_, err := server.New(context.Background(), demodata.ContosoHealth(), analysis.NewDefault(), missing)
+	if err == nil || !strings.Contains(err.Error(), "open dashboard override") {
+		t.Fatalf("missing dashboard override error = %v", err)
 	}
 }
 

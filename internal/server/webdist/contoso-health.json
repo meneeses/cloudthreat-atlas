@@ -1,0 +1,586 @@
+{
+  "schemaVersion": "1.0",
+  "id": "contoso-health-demo",
+  "name": "Contoso Health",
+  "provider": "azure",
+  "generatedAt": "2026-10-04T12:00:00Z",
+  "description": "Synthetic healthcare environment designed to demonstrate explainable Azure attack paths.",
+  "resources": [
+    {
+      "id": "internet-public",
+      "name": "Public Internet",
+      "type": "external.internet",
+      "category": "entry_point",
+      "provider": "external",
+      "criticality": "info",
+      "properties": {
+        "trust": "untrusted"
+      }
+    },
+    {
+      "id": "app-clinical-api",
+      "name": "Clinical API",
+      "type": "Microsoft.Web/sites",
+      "category": "compute",
+      "provider": "azure",
+      "location": "westeurope",
+      "criticality": "high",
+      "properties": {
+        "httpsOnly": "true",
+        "publicNetworkAccess": "enabled"
+      }
+    },
+    {
+      "id": "identity-clinical-api",
+      "name": "Clinical API Identity",
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "category": "identity",
+      "provider": "azure",
+      "location": "westeurope",
+      "criticality": "high",
+      "properties": {
+        "credentialType": "managed_identity"
+      }
+    },
+    {
+      "id": "vault-clinical-prod",
+      "name": "Clinical Secrets Vault",
+      "type": "Microsoft.KeyVault/vaults",
+      "category": "secrets",
+      "provider": "azure",
+      "location": "westeurope",
+      "criticality": "high",
+      "properties": {
+        "publicNetworkAccess": "disabled",
+        "rbacAuthorization": "true"
+      }
+    },
+    {
+      "id": "database-clinical-prod",
+      "name": "Clinical Records PostgreSQL",
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers",
+      "category": "data",
+      "provider": "azure",
+      "location": "westeurope",
+      "criticality": "critical",
+      "properties": {
+        "dataClassification": "restricted",
+        "publicNetworkAccess": "disabled"
+      }
+    },
+    {
+      "id": "nsg-jumpbox-public",
+      "name": "Jumpbox NSG",
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "category": "network",
+      "provider": "azure",
+      "location": "westeurope",
+      "criticality": "high",
+      "properties": {
+        "destinationPort": "22",
+        "source": "0.0.0.0/0"
+      }
+    },
+    {
+      "id": "vm-ops-jumpbox",
+      "name": "Operations Jumpbox",
+      "type": "Microsoft.Compute/virtualMachines",
+      "category": "compute",
+      "provider": "azure",
+      "location": "westeurope",
+      "criticality": "high",
+      "properties": {
+        "patchState": "outdated",
+        "publicIp": "synthetic"
+      }
+    },
+    {
+      "id": "identity-ops-jumpbox",
+      "name": "Jumpbox Operations Identity",
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "category": "identity",
+      "provider": "azure",
+      "location": "westeurope",
+      "criticality": "high",
+      "properties": {
+        "role": "Storage Blob Data Contributor"
+      }
+    },
+    {
+      "id": "storage-patient-archive",
+      "name": "Patient Archive",
+      "type": "Microsoft.Storage/storageAccounts",
+      "category": "data",
+      "provider": "azure",
+      "location": "westeurope",
+      "criticality": "critical",
+      "properties": {
+        "allowBlobPublicAccess": "false",
+        "dataClassification": "restricted"
+      }
+    },
+    {
+      "id": "pipeline-ci-security",
+      "name": "Security Platform Pipeline",
+      "type": "devops.pipeline",
+      "category": "entry_point",
+      "provider": "github",
+      "criticality": "high",
+      "properties": {
+        "credential": "long_lived_secret",
+        "environment": "production"
+      }
+    },
+    {
+      "id": "sp-deploy-prod",
+      "name": "Production Deployment Principal",
+      "type": "Microsoft.Entra/servicePrincipals",
+      "category": "identity",
+      "provider": "azure",
+      "criticality": "high",
+      "properties": {
+        "authentication": "client_secret"
+      }
+    },
+    {
+      "id": "rg-production",
+      "name": "Production Resource Group",
+      "type": "Microsoft.Resources/resourceGroups",
+      "category": "scope",
+      "provider": "azure",
+      "location": "westeurope",
+      "criticality": "high",
+      "properties": {
+        "roleAssignment": "Owner"
+      }
+    },
+    {
+      "id": "workspace-security-prod",
+      "name": "Production Security Analytics",
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "category": "security",
+      "provider": "azure",
+      "location": "westeurope",
+      "criticality": "critical",
+      "properties": {
+        "containsSecurityTelemetry": "true",
+        "retentionDays": "90"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "id": "rel-internet-app",
+      "source": "internet-public",
+      "target": "app-clinical-api",
+      "type": "public_http",
+      "label": "public HTTPS",
+      "description": "The public internet can send requests to the Clinical API.",
+      "exploitable": true
+    },
+    {
+      "id": "rel-app-identity",
+      "source": "app-clinical-api",
+      "target": "identity-clinical-api",
+      "type": "managed_identity",
+      "label": "runs as",
+      "description": "Code execution in the app can request tokens for its managed identity.",
+      "exploitable": true
+    },
+    {
+      "id": "rel-identity-vault",
+      "source": "identity-clinical-api",
+      "target": "vault-clinical-prod",
+      "type": "secret_access",
+      "label": "can read secrets",
+      "description": "The managed identity can read secrets from the production vault.",
+      "exploitable": true
+    },
+    {
+      "id": "rel-vault-database",
+      "source": "vault-clinical-prod",
+      "target": "database-clinical-prod",
+      "type": "credential_pivot",
+      "label": "unlocks database",
+      "description": "A stored credential grants access to the clinical PostgreSQL server.",
+      "exploitable": true
+    },
+    {
+      "id": "rel-internet-nsg",
+      "source": "internet-public",
+      "target": "nsg-jumpbox-public",
+      "type": "public_ingress",
+      "label": "0.0.0.0/0 to SSH",
+      "description": "The NSG permits SSH traffic from every internet address.",
+      "exploitable": true
+    },
+    {
+      "id": "rel-nsg-vm",
+      "source": "nsg-jumpbox-public",
+      "target": "vm-ops-jumpbox",
+      "type": "network_access",
+      "label": "exposes",
+      "description": "The permissive rule exposes the operations jumpbox.",
+      "exploitable": true
+    },
+    {
+      "id": "rel-vm-identity",
+      "source": "vm-ops-jumpbox",
+      "target": "identity-ops-jumpbox",
+      "type": "privileged_identity",
+      "label": "runs as",
+      "description": "A process on the VM can request tokens for the operations identity.",
+      "exploitable": true
+    },
+    {
+      "id": "rel-identity-storage",
+      "source": "identity-ops-jumpbox",
+      "target": "storage-patient-archive",
+      "type": "data_access",
+      "label": "can read and write blobs",
+      "description": "The identity can access restricted patient archive containers.",
+      "exploitable": true
+    },
+    {
+      "id": "rel-pipeline-sp",
+      "source": "pipeline-ci-security",
+      "target": "sp-deploy-prod",
+      "type": "pipeline_credential",
+      "label": "authenticates as",
+      "description": "The pipeline stores a long-lived credential for the deployment principal.",
+      "exploitable": true
+    },
+    {
+      "id": "rel-sp-owner",
+      "source": "sp-deploy-prod",
+      "target": "rg-production",
+      "type": "owner_role",
+      "label": "Owner",
+      "description": "The service principal has Owner rights over the production resource group.",
+      "exploitable": true
+    },
+    {
+      "id": "rel-rg-workspace",
+      "source": "rg-production",
+      "target": "workspace-security-prod",
+      "type": "controls",
+      "label": "contains",
+      "description": "Owner rights permit changes to the critical security analytics workspace.",
+      "exploitable": true
+    }
+  ],
+  "findings": [
+    {
+      "id": "finding-pipeline-owner-chain",
+      "ruleId": "CTA-AZ-003",
+      "title": "Pipeline credential grants production Owner control",
+      "description": "A compromised delivery pipeline can assume a service principal with Owner rights over a production resource group.",
+      "severity": "critical",
+      "score": 98,
+      "resourceIds": [
+        "pipeline-ci-security",
+        "sp-deploy-prod",
+        "rg-production",
+        "workspace-security-prod"
+      ],
+      "relationshipIds": [
+        "rel-pipeline-sp",
+        "rel-sp-owner",
+        "rel-rg-workspace"
+      ],
+      "evidence": [
+        "The pipeline can authenticate as a long-lived service principal.",
+        "The service principal has the Owner role at resource-group scope.",
+        "The resource group contains a critical security analytics workspace."
+      ],
+      "remediation": {
+        "summary": "Replace the secret with workload federation and remove Owner-level access.",
+        "steps": [
+          "Revoke the long-lived service-principal secret.",
+          "Configure workload identity federation for the pipeline.",
+          "Replace Owner with a task-specific custom role at resource scope."
+        ]
+      }
+    },
+    {
+      "id": "finding-public-app-secret-chain",
+      "ruleId": "CTA-AZ-001",
+      "title": "Public application identity can reach the clinical database",
+      "description": "An internet-facing App Service uses a managed identity that can read a database credential from Key Vault.",
+      "severity": "critical",
+      "score": 96,
+      "resourceIds": [
+        "internet-public",
+        "app-clinical-api",
+        "identity-clinical-api",
+        "vault-clinical-prod",
+        "database-clinical-prod"
+      ],
+      "relationshipIds": [
+        "rel-internet-app",
+        "rel-app-identity",
+        "rel-identity-vault",
+        "rel-vault-database"
+      ],
+      "evidence": [
+        "The App Service accepts public internet traffic.",
+        "Its managed identity can read a database credential from Key Vault.",
+        "The credential unlocks a critical PostgreSQL server."
+      ],
+      "remediation": {
+        "summary": "Remove the identity's direct secret-read permission and use a narrowly scoped credential flow.",
+        "steps": [
+          "Remove the Key Vault secret access relationship from the application identity.",
+          "Restrict App Service ingress with a private endpoint or an authenticated gateway.",
+          "Rotate the affected database credential after access is removed."
+        ]
+      }
+    },
+    {
+      "id": "finding-public-vm-storage-chain",
+      "ruleId": "CTA-AZ-002",
+      "title": "Public VM identity can read sensitive patient storage",
+      "description": "A permissive NSG exposes a virtual machine whose workload identity has data-plane access to a critical storage account.",
+      "severity": "critical",
+      "score": 94,
+      "resourceIds": [
+        "internet-public",
+        "nsg-jumpbox-public",
+        "vm-ops-jumpbox",
+        "identity-ops-jumpbox",
+        "storage-patient-archive"
+      ],
+      "relationshipIds": [
+        "rel-internet-nsg",
+        "rel-nsg-vm",
+        "rel-vm-identity",
+        "rel-identity-storage"
+      ],
+      "evidence": [
+        "The NSG accepts management traffic from any source.",
+        "The virtual machine exposes a privileged workload identity.",
+        "The identity has blob data access on patient storage."
+      ],
+      "remediation": {
+        "summary": "Remove public management ingress and reduce the workload identity's storage role.",
+        "steps": [
+          "Delete the public NSG rule and use Azure Bastion or a private management path.",
+          "Replace broad blob access with the minimum container-scoped role.",
+          "Review storage diagnostics for access from the exposed VM."
+        ]
+      }
+    }
+  ],
+  "attackPaths": [
+    {
+      "id": "path-internet-public-app-clinical-api-identity-clinical-api-vault-clinical-prod-database-clinical-prod",
+      "title": "Public application identity pivots into the clinical database",
+      "description": "An internet-facing application can use its managed identity, read a database secret, and reach protected clinical data.",
+      "severity": "critical",
+      "score": 96,
+      "entryPoint": "internet-public",
+      "target": "database-clinical-prod",
+      "resourceIds": [
+        "internet-public",
+        "app-clinical-api",
+        "identity-clinical-api",
+        "vault-clinical-prod",
+        "database-clinical-prod"
+      ],
+      "relationshipIds": [
+        "rel-internet-app",
+        "rel-app-identity",
+        "rel-identity-vault",
+        "rel-vault-database"
+      ],
+      "findingIds": [
+        "finding-public-app-secret-chain"
+      ],
+      "steps": [
+        {
+          "order": 1,
+          "source": "internet-public",
+          "target": "app-clinical-api",
+          "relationshipId": "rel-internet-app",
+          "narrative": "The public internet can send requests to the Clinical API."
+        },
+        {
+          "order": 2,
+          "source": "app-clinical-api",
+          "target": "identity-clinical-api",
+          "relationshipId": "rel-app-identity",
+          "narrative": "Code execution in the app can request tokens for its managed identity."
+        },
+        {
+          "order": 3,
+          "source": "identity-clinical-api",
+          "target": "vault-clinical-prod",
+          "relationshipId": "rel-identity-vault",
+          "narrative": "The managed identity can read secrets from the production vault."
+        },
+        {
+          "order": 4,
+          "source": "vault-clinical-prod",
+          "target": "database-clinical-prod",
+          "relationshipId": "rel-vault-database",
+          "narrative": "A stored credential grants access to the clinical PostgreSQL server."
+        }
+      ]
+    },
+    {
+      "id": "path-internet-public-nsg-jumpbox-public-vm-ops-jumpbox-identity-ops-jumpbox-storage-patient-archive",
+      "title": "Exposed virtual machine reaches sensitive patient storage",
+      "description": "Open network ingress and an over-privileged workload identity create a direct route to sensitive blobs.",
+      "severity": "critical",
+      "score": 96,
+      "entryPoint": "internet-public",
+      "target": "storage-patient-archive",
+      "resourceIds": [
+        "internet-public",
+        "nsg-jumpbox-public",
+        "vm-ops-jumpbox",
+        "identity-ops-jumpbox",
+        "storage-patient-archive"
+      ],
+      "relationshipIds": [
+        "rel-internet-nsg",
+        "rel-nsg-vm",
+        "rel-vm-identity",
+        "rel-identity-storage"
+      ],
+      "findingIds": [
+        "finding-public-vm-storage-chain"
+      ],
+      "steps": [
+        {
+          "order": 1,
+          "source": "internet-public",
+          "target": "nsg-jumpbox-public",
+          "relationshipId": "rel-internet-nsg",
+          "narrative": "The NSG permits SSH traffic from every internet address."
+        },
+        {
+          "order": 2,
+          "source": "nsg-jumpbox-public",
+          "target": "vm-ops-jumpbox",
+          "relationshipId": "rel-nsg-vm",
+          "narrative": "The permissive rule exposes the operations jumpbox."
+        },
+        {
+          "order": 3,
+          "source": "vm-ops-jumpbox",
+          "target": "identity-ops-jumpbox",
+          "relationshipId": "rel-vm-identity",
+          "narrative": "A process on the VM can request tokens for the operations identity."
+        },
+        {
+          "order": 4,
+          "source": "identity-ops-jumpbox",
+          "target": "storage-patient-archive",
+          "relationshipId": "rel-identity-storage",
+          "narrative": "The identity can access restricted patient archive containers."
+        }
+      ]
+    },
+    {
+      "id": "path-pipeline-ci-security-sp-deploy-prod-rg-production-workspace-security-prod",
+      "title": "Compromised pipeline controls a production resource group",
+      "description": "A leaked pipeline credential grants Owner-level control and reaches a critical security analytics resource.",
+      "severity": "critical",
+      "score": 97,
+      "entryPoint": "pipeline-ci-security",
+      "target": "workspace-security-prod",
+      "resourceIds": [
+        "pipeline-ci-security",
+        "sp-deploy-prod",
+        "rg-production",
+        "workspace-security-prod"
+      ],
+      "relationshipIds": [
+        "rel-pipeline-sp",
+        "rel-sp-owner",
+        "rel-rg-workspace"
+      ],
+      "findingIds": [
+        "finding-pipeline-owner-chain"
+      ],
+      "steps": [
+        {
+          "order": 1,
+          "source": "pipeline-ci-security",
+          "target": "sp-deploy-prod",
+          "relationshipId": "rel-pipeline-sp",
+          "narrative": "The pipeline stores a long-lived credential for the deployment principal."
+        },
+        {
+          "order": 2,
+          "source": "sp-deploy-prod",
+          "target": "rg-production",
+          "relationshipId": "rel-sp-owner",
+          "narrative": "The service principal has Owner rights over the production resource group."
+        },
+        {
+          "order": 3,
+          "source": "rg-production",
+          "target": "workspace-security-prod",
+          "relationshipId": "rel-rg-workspace",
+          "narrative": "Owner rights permit changes to the critical security analytics workspace."
+        }
+      ]
+    }
+  ],
+  "riskScore": 96,
+  "simulations": [
+    {
+      "id": "sim-scope-vault-access",
+      "name": "Remove direct Key Vault secret access",
+      "description": "Tests the effect of removing the Clinical API identity's direct secret permission.",
+      "changes": [
+        {
+          "id": "change-remove-vault-access",
+          "type": "remove-edge",
+          "targetId": "rel-identity-vault",
+          "description": "Remove the identity-to-vault secret access edge."
+        }
+      ],
+      "riskScoreAfter": 80,
+      "removedAttackPaths": [
+        "path-internet-public-app-clinical-api-identity-clinical-api-vault-clinical-prod-database-clinical-prod"
+      ]
+    },
+    {
+      "id": "sim-close-public-ssh",
+      "name": "Close public SSH ingress",
+      "description": "Tests the effect of moving jumpbox administration to a private path.",
+      "changes": [
+        {
+          "id": "change-remove-public-vm-access",
+          "type": "remove-edge",
+          "targetId": "rel-nsg-vm",
+          "description": "Remove the public NSG-to-VM access edge."
+        }
+      ],
+      "riskScoreAfter": 81,
+      "removedAttackPaths": [
+        "path-internet-public-nsg-jumpbox-public-vm-ops-jumpbox-identity-ops-jumpbox-storage-patient-archive"
+      ]
+    },
+    {
+      "id": "sim-remove-owner",
+      "name": "Replace production Owner role",
+      "description": "Tests the effect of replacing broad Owner access with least privilege.",
+      "changes": [
+        {
+          "id": "change-remove-owner-role",
+          "type": "remove-edge",
+          "targetId": "rel-sp-owner",
+          "description": "Remove the service-principal Owner assignment."
+        }
+      ],
+      "riskScoreAfter": 80,
+      "removedAttackPaths": [
+        "path-pipeline-ci-security-sp-deploy-prod-rg-production-workspace-security-prod"
+      ]
+    }
+  ]
+}

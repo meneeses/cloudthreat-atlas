@@ -1,11 +1,16 @@
-.PHONY: setup build test verify demo web-dev
+.PHONY: setup build build-embedded build-pages test verify demo web-dev
 
 setup:
 	cd web && npm ci
 
 build: setup
-	cd web && npm run build
+	cd web && npm run build:embed
 	go build ./cmd/atlas
+
+build-embedded: build
+
+build-pages: setup
+	cd web && npm run build
 
 test: setup
 	go test -race . ./cmd/... ./internal/...
@@ -17,7 +22,7 @@ verify: setup
 	./scripts/verify-git-identity.sh
 
 demo: setup
-	cd web && npm run build:api
+	cd web && npm run build:embed
 	go run ./cmd/atlas demo
 
 web-dev:

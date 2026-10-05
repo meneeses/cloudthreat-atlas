@@ -23,7 +23,7 @@ import (
 const usage = `CloudThreat Atlas maps cloud relationships into explainable attack paths.
 
 Usage:
-  atlas demo [--addr 127.0.0.1:8080] [--web-dir web/dist]
+  atlas demo [--addr 127.0.0.1:8080] [--web-dir DIRECTORY]
   atlas analyze --input snapshot.json [--output analyzed.json]
   atlas scan azure --subscription SUBSCRIPTION_ID [--resource-group NAME] [--redact] [--output snapshot.local.json]
   atlas report [--input snapshot.json] --format json|html|markdown|sarif [--output report]
@@ -68,7 +68,7 @@ func runDemo(ctx context.Context, args []string, stdout, stderr io.Writer) error
 	flags := flag.NewFlagSet("demo", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	addr := flags.String("addr", "127.0.0.1:8080", "local listen address")
-	webDir := flags.String("web-dir", "web/dist", "compiled web dashboard directory")
+	webDir := flags.String("web-dir", "", "optional compiled dashboard override directory")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
