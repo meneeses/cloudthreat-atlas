@@ -15,6 +15,21 @@ git -C "$guard_test_dir" remote add origin git@github-pessoal:meneeses/cloudthre
   "$repo_root/scripts/verify-git-identity.sh"
 )
 
+git -C "$guard_test_dir" commit --allow-empty -qm 'test: personal identity'
+
+(
+  cd "$guard_test_dir"
+  "$repo_root/scripts/check-forbidden-identity.sh" --all >/dev/null
+)
+
+if (
+  cd "$guard_test_dir"
+  "$repo_root/scripts/check-forbidden-identity.sh" refs/does-not-exist >/dev/null 2>&1
+); then
+  printf 'Expected the history guard to fail closed for an invalid revision.\n' >&2
+  exit 1
+fi
+
 git -C "$guard_test_dir" config user.name 'ICone Academy'
 git -C "$guard_test_dir" config user.email 'dev@icone.academy'
 
